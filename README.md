@@ -83,6 +83,8 @@ If set, script computes:
 - Contribution needed per ticker
 - Total contribution required
 
+If "None", then target value contributions will be based on current holdings
+
 # ▶️ Run the Script
 
 ```
