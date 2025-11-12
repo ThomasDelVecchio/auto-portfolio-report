@@ -1,0 +1,11 @@
+ticker,shares,asset_class
+SPY,10,Equity
+QQQ,15,Equity
+IWM,20,Equity
+EFA,12,International Equity
+VWO,18,Emerging Markets
+TLT,25,Fixed Income
+VNQ,14,Real Estate
+XLE,16,Energy
+ARKK,8,Innovation/Tech
+GLD,11,Commodities

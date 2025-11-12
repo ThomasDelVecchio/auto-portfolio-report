@@ -1,0 +1,11 @@
+# Ignore generated and private files
+*.docx
+*.pdf
+__pycache__/
+*.pyc
+
+# Ignore your real data
+holdings.csv
+
+# Keep the public sample
+!sample holdings.csv
