@@ -3,7 +3,7 @@
 
 # Allow only these specific files
 !.gitignore
-!Final Investment Report Generator.py
+!InvestmentReportGenerator.py
 !README.md
 !Sample Output.pdf
 !sample holdings.csv
