@@ -1,0 +1,10 @@
+# Ignore everything by default
+*
+
+# Allow only these specific files
+!.gitignore
+!Final Investment Report Generator.py
+!README.md
+!Sample Output.pdf
+!sample holdings.csv
+!targets_asset.csv
