@@ -15,6 +15,7 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx2pdf import convert
+import os  # <-- ADDED: for Colab/Drive path resolution
 
 # -------------------------- Formatting --------------------------
 
@@ -32,11 +33,28 @@ def fmt_dollar(x):
 
 # ----------------------------- CONFIG -----------------------------
 
+def _resolve_input_path(filename: str) -> str:
+    """
+    Make script work both locally (GitHub/desktop) and in Colab with Drive.
+
+    - If running in Colab and the 'Investment Report Inputs' folder in Drive
+      contains the file, use that.
+    - Otherwise, fall back to the local filename.
+    """
+    try:
+        drive_base = "/content/drive/MyDrive/Investment Report Inputs"
+        candidate = os.path.join(drive_base, filename)
+        if os.path.exists(candidate):
+            return candidate
+    except Exception:
+        pass
+    return filename
+
 # Your holdings file in the repo
-HOLDINGS_CSV = "sample holdings.csv"
+HOLDINGS_CSV = _resolve_input_path("sample holdings.csv")
 
 # Optional: per-asset-class target file (asset_class,target_pct)
-ASSET_TARGETS_CSV = "targets_asset.csv"   # if missing, it's fine
+ASSET_TARGETS_CSV = _resolve_input_path("targets_asset.csv")   # if missing, it's fine
 
 # How to split an asset-class target across its tickers:
 #   "value" -> proportional to current market value (default)
