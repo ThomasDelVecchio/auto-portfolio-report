@@ -77,6 +77,11 @@ COLOR_MAIN = ["#2563EB", "#10B981", "#F59E0B", "#6366F1", "#14B8A6"]
 # Optional: target total portfolio value (set to a number, or leave as None)
 TARGET_PORTFOLIO_VALUE = 50000.0  # e.g. 250000.0
 
+# Optional: extra folders to copy finished reports into.
+# - In Colab, this script will ALSO auto-detect: /content/drive/MyDrive/Investment Report Outputs
+# - On your PC, you can add your local Google Drive folder here if you want.
+EXTRA_OUTPUT_DIRS = [r"G:\My Drive\Investment Report Outputs"]
+
 
 # Illustrative long-run assumptions for Risk/Return views
 RISK_RETURN = {
@@ -945,11 +950,46 @@ pdf_name = f"Investment_Report_{today_str}.pdf"
 
 doc.save(docx_name)
 
+pdf_created = False
 try:
     convert(docx_name, pdf_name)
+    pdf_created = True
     print(f"Report generated: {docx_name}  and  {pdf_name}")
 except Exception as e:
     print(f"Report generated: {docx_name}")
     print(f"PDF export failed: {e}")
     print("If you want automatic PDF export, install `docx2pdf` and ensure Word/LibreOffice is available.")
+
+# ---- Extra: copy outputs into Drive / other folders ----
+try:
+    import os, shutil
+
+    # Start with any user-configured extra dirs (for local runs)
+    dest_dirs = list(EXTRA_OUTPUT_DIRS) if "EXTRA_OUTPUT_DIRS" in globals() else []
+
+    # If running in Colab with Google Drive mounted, also use your Drive folder
+    colab_drive_outputs = "/content/drive/MyDrive/Investment Report Outputs"
+    if os.path.isdir(colab_drive_outputs) and colab_drive_outputs not in dest_dirs:
+        dest_dirs.append(colab_drive_outputs)
+
+    # Collect all generated files (docx, pdf if created)
+    files_to_copy = [docx_name]
+    if pdf_created and os.path.exists(pdf_name):
+        files_to_copy.append(pdf_name)
+
+    # Copy each file into each destination folder
+    for out_dir in dest_dirs:
+        if not os.path.isdir(out_dir):
+            continue
+        for fname in files_to_copy:
+            src = os.path.abspath(fname)
+            dst = os.path.join(out_dir, os.path.basename(fname))
+            try:
+                shutil.copy2(src, dst)
+                print(f"Copied {fname} -> {dst}")
+            except Exception as copy_err:
+                print(f"Could not copy {fname} to {out_dir}: {copy_err}")
+except Exception as outer_err:
+    print(f"Post-processing copy step failed: {outer_err}")
+
 
