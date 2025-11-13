@@ -74,7 +74,7 @@ Creates:
   - **Includes TOTAL ROW**
 - **Performance Metrics**
   - MTD / YTD vs benchmarks
-  - 1W / 1M / 3M / 6M returns
+  - 1D / 1W / 1M / 3M / 6M returns
 - **Visuals**
   - Allocation pies  
   - Sector heatmap  
