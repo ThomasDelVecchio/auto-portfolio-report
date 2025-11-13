@@ -671,6 +671,7 @@ def add_table(headers, rows, right_align_cols=None):
 
 # Cover
 doc.add_paragraph("\n\n\n\n\n")
+
 cover = doc.add_paragraph("Comprehensive Investment Report — Live Portfolio")
 cover.runs[0].bold = True
 cover.runs[0].font.size = Pt(26)
@@ -681,9 +682,21 @@ subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
 subtitle.runs[0].font.size = Pt(14)
 subtitle.runs[0].font.color.rgb = RGBColor(70, 130, 180)
 
-doc.add_paragraph()
-doc.add_paragraph("Prepared for: Your Mom").alignment = WD_ALIGN_PARAGRAPH.CENTER
+# >>> ADD TIMESTAMP ON COVER <<<
+timestamp_str = datetime.now().strftime("%A, %B %d, %Y — %I:%M %p")
+ts = doc.add_paragraph(f"Report Run: {timestamp_str}")
+ts.alignment = WD_ALIGN_PARAGRAPH.CENTER
+ts.runs[0].font.size = Pt(12)
+ts.runs[0].font.color.rgb = RGBColor(110, 110, 110)
+
+doc.add_paragraph()  # empty spacer
+
+prepared = doc.add_paragraph("Prepared for: Tom Short")
+prepared.alignment = WD_ALIGN_PARAGRAPH.CENTER
+prepared.runs[0].font.size = Pt(13)
+
 doc.add_page_break()
+
 
 # Executive Summary
 doc.add_heading("Executive Summary", level=1)
