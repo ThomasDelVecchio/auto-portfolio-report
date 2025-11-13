@@ -15,7 +15,6 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx2pdf import convert
-import os  # <-- added
 
 # -------------------------- Formatting --------------------------
 
@@ -33,26 +32,11 @@ def fmt_dollar(x):
 
 # ----------------------------- CONFIG -----------------------------
 
-def running_in_colab():
-    """
-    Return True if running inside Google Colab, else False.
-    Safe to call in any environment.
-    """
-    try:
-        return "google.colab" in str(get_ipython())
-    except NameError:
-        return False
+# Your holdings file in the repo
+HOLDINGS_CSV = "sample holdings.csv"
 
-if running_in_colab():
-    # Google Colab + Google Drive paths
-    HOLDINGS_CSV = "/content/drive/MyDrive/Investment Report Inputs/sample holdings.csv"
-    ASSET_TARGETS_CSV = "/content/drive/MyDrive/Investment Report Inputs/targets_asset.csv"
-else:
-    # Your holdings file in the repo
-    HOLDINGS_CSV = "sample holdings.csv"
-
-    # Optional: per-asset-class target file (asset_class,target_pct)
-    ASSET_TARGETS_CSV = "targets_asset.csv"   # if missing, it's fine
+# Optional: per-asset-class target file (asset_class,target_pct)
+ASSET_TARGETS_CSV = "targets_asset.csv"   # if missing, it's fine
 
 # How to split an asset-class target across its tickers:
 #   "value" -> proportional to current market value (default)
@@ -289,6 +273,7 @@ df["contribute_to_target"] = np.where(
     np.nan,
     np.where(df["delta_to_target_raw"] > 0, df["delta_to_target_raw"], 0.0)
 )
+
 
 # -------- 3) SECTOR & GEOGRAPHIC (simple illustrative weights) --------
 
@@ -551,6 +536,7 @@ if len(risk_df):
 plt.grid(alpha=0.3)
 plt.tight_layout()
 risk_stream = BytesIO()
+plt.savefig(risk_stream, format="png", bbox_inches="tight", facecolor="white")
 risk_stream.seek(0)
 plt.close()
 
