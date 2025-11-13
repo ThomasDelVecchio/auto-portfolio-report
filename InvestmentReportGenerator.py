@@ -961,34 +961,80 @@ today_str = datetime.now().strftime("%Y-%m-%d")
 docx_name = f"Investment_Report_{today_str}.docx"
 pdf_name = f"Investment_Report_{today_str}.pdf"
 
+# Always save the DOCX
 doc.save(docx_name)
+print(f"Report generated: {docx_name}")
 
 # ----------------------------------------------------------------
-# IMPORTANT: Prevent old/cached DOCX from being used by docx2pdf
+# Clean up any stale PDF and "stale Word cache" issues
 # ----------------------------------------------------------------
-# If a PDF with the same name already exists, remove it
 if os.path.exists(pdf_name):
     os.remove(pdf_name)
 
-# Touch the DOCX file so Windows/Word sees it as freshly updated
-# (fixes "Prepared for: Your Mom" bug caused by stale cached file)
+# Touch DOCX so any external tooling (Word, LibreOffice) sees it as fresh
 if os.path.exists(docx_name):
     os.utime(docx_name, None)
 
-
 pdf_created = False
-try:
-    convert(docx_name, pdf_name)
-    pdf_created = True
-    print(f"Report generated: {docx_name}  and  {pdf_name}")
-except Exception as e:
-    print(f"Report generated: {docx_name}")
-    print(f"PDF export failed: {e}")
-    print("If you want automatic PDF export, install `docx2pdf` and ensure Word/LibreOffice is available.")
+
+import sys
+import subprocess
+import shutil
+
+# ------------------ Platform-specific PDF export ------------------
+
+# Windows or macOS → use docx2pdf (Word automation)
+if sys.platform.startswith("win") or sys.platform == "darwin":
+    try:
+        from docx2pdf import convert
+        print("Attempting PDF export via docx2pdf (Word)...")
+        convert(docx_name, pdf_name)
+        if os.path.exists(pdf_name):
+            pdf_created = True
+            print(f"✔ PDF created via docx2pdf: {pdf_name}")
+        else:
+            print("⚠ docx2pdf ran, but PDF file not found.")
+    except Exception as e:
+        print(f"❌ PDF export failed via docx2pdf: {e}")
+        print("Make sure Microsoft Word is installed and docx2pdf is configured.")
+
+# Linux (Google Colab, most servers) → use LibreOffice CLI
+elif sys.platform.startswith("linux"):
+    try:
+        # Prefer 'libreoffice', fall back to 'soffice' if needed
+        lo_cmd = None
+        if shutil.which("libreoffice"):
+            lo_cmd = "libreoffice"
+        elif shutil.which("soffice"):
+            lo_cmd = "soffice"
+
+        if lo_cmd is None:
+            raise RuntimeError(
+                "LibreOffice is not installed (no 'libreoffice' or 'soffice' found on PATH)."
+            )
+
+        print(f"Attempting PDF export via {lo_cmd} (headless)...")
+        subprocess.run(
+            [lo_cmd, "--headless", "--convert-to", "pdf", docx_name, "--outdir", "."],
+            check=True
+        )
+
+        if os.path.exists(pdf_name):
+            pdf_created = True
+            print(f"✔ PDF created via {lo_cmd}: {pdf_name}")
+        else:
+            print("⚠ LibreOffice ran, but PDF file not found.")
+    except Exception as e:
+        print(f"❌ PDF export failed on Linux: {e}")
+        print("Install LibreOffice for automatic DOCX → PDF export on Linux.")
+
+# Fallback summary
+if not pdf_created:
+    print("⚠ No PDF generated. You still have the DOCX file.")
 
 # ---- Extra: copy outputs into Drive / other folders ----
 try:
-    import os, shutil
+    import shutil  # already imported above but safe
 
     # Start with any user-configured extra dirs (for local runs)
     dest_dirs = list(EXTRA_OUTPUT_DIRS) if "EXTRA_OUTPUT_DIRS" in globals() else []
@@ -998,7 +1044,7 @@ try:
     if os.path.isdir(colab_drive_outputs) and colab_drive_outputs not in dest_dirs:
         dest_dirs.append(colab_drive_outputs)
 
-    # Collect all generated files (docx, pdf if created)
+    # Collect all generated files (DOCX, and PDF if created)
     files_to_copy = [docx_name]
     if pdf_created and os.path.exists(pdf_name):
         files_to_copy.append(pdf_name)
@@ -1015,7 +1061,11 @@ try:
                 print(f"Copied {fname} -> {dst}")
             except Exception as copy_err:
                 print(f"Could not copy {fname} to {out_dir}: {copy_err}")
+
+    if dest_dirs:
+        if pdf_created:
+            print("✔ Copied DOCX and PDF to output folders.")
+        else:
+            print("✔ Copied DOCX to output folders (no PDF).")
 except Exception as outer_err:
     print(f"Post-processing copy step failed: {outer_err}")
-
-
