@@ -131,6 +131,23 @@ def get_return_pct(ticker, start_date, end_date):
     except Exception:
         return np.nan
 
+def get_1d_return_pct(ticker):
+    """
+    1D return = (current price / prior day's close) - 1
+    Uses period='2d' so we always get yesterday close + today's live price.
+    """
+    try:
+        data = yf.download(ticker, period="2d", progress=False)
+        if data.empty or len(data) < 2:
+            return np.nan
+        close = data["Close"].astype(float)
+        prev_close = close.iloc[-2]
+        last_price = close.iloc[-1]
+        return (last_price / prev_close - 1.0) * 100.0
+    except Exception:
+        return np.nan
+
+
 def read_asset_targets(path: str) -> pd.DataFrame | None:
     try:
         df = pd.read_csv(path)
@@ -392,19 +409,42 @@ bench_rows.insert(0, {"Benchmark": "Portfolio (Live)",
                       "YTD %": round(port_ytd, 2) if not np.isnan(port_ytd) else np.nan})
 bench_df = pd.DataFrame(bench_rows)
 
-# --------- 6) HOLDINGS MULTI-HORIZON RETURNS (1W, 1M, 3M, 6M) ---------
+# --------- 6) HOLDINGS MULTI-HORIZON RETURNS (1D, 1W, 1M, 3M, 6M) ---------
 
-horizons = {"1W %": 7, "1M %": 30, "3M %": 90, "6M %": 180}
+# NEW: include 1D as 1-day return
+horizons = {
+    "1D %": 1,
+    "1W %": 7,
+    "1M %": 30,
+    "3M %": 90,
+    "6M %": 180
+}
+
 returns_rows = []
 for _, row in df.iterrows():
     t = row["ticker"]
     r = {"Ticker": t}
+
     for label, days in horizons.items():
-        start = today - pd.Timedelta(days=days)
-        val = get_return_pct(t, start, today)
-        r[label] = round(val, 2) if not np.isnan(val) else np.nan
+        if label == "1D %":
+            # 1-day return = current price vs yesterday close
+            price_data = yf.Ticker(t).history(period="2d")
+            if len(price_data) >= 2:
+                prev_close = float(price_data["Close"].iloc[-2])
+                current = float(price_data["Close"].iloc[-1])
+                r[label] = round(((current / prev_close) - 1) * 100, 2)
+            else:
+                r[label] = np.nan
+        else:
+            start = today - pd.Timedelta(days=days)
+            val = get_return_pct(t, start, today)
+            r[label] = round(val, 2) if not np.isnan(val) else np.nan
+
     returns_rows.append(r)
+
 returns_df = pd.DataFrame(returns_rows)
+
+
 
 # ---------------- 7) LONG-TERM PROJECTIONS (20 YEARS) -----------------
 
@@ -822,14 +862,25 @@ add_table(["Benchmark", "Portfolio MTD %", "Benchmark MTD %", "Excess MTD %"], m
 doc.add_paragraph("Year-to-date (YTD) comparison:")
 add_table(["Benchmark", "Portfolio YTD %", "Benchmark YTD %", "Excess YTD %"], ytd_rows, right_align_cols=[1, 2, 3])
 
-doc.add_paragraph()
+doc.add_paragraph("\n")
 doc.add_heading("Holdings Multi-Horizon Returns", level=2)
 doc.add_paragraph("Performance of each holding over multiple lookback periods, ranked by 6-month return:")
 returns_sorted = returns_df.sort_values("6M %", ascending=False, na_position="last")
 rows = []
 for _, r in returns_sorted.iterrows():
-    rows.append([r["Ticker"], fmt_pct(r["1W %"]), fmt_pct(r["1M %"]), fmt_pct(r["3M %"]), fmt_pct(r["6M %"])])
-add_table(["Ticker", "1W %", "1M %", "3M %", "6M %"], rows, right_align_cols=[1, 2, 3, 4])
+    rows.append([
+        r["Ticker"],
+        fmt_pct(r["1D %"]),
+        fmt_pct(r["1W %"]),
+        fmt_pct(r["1M %"]),
+        fmt_pct(r["3M %"]),
+        fmt_pct(r["6M %"]),
+    ])
+add_table(
+    ["Ticker", "1D %", "1W %", "1M %", "3M %", "6M %"],
+    rows,
+    right_align_cols=[1, 2, 3, 4, 5]
+)
 
 doc.add_paragraph("\n")
 doc.add_heading("Compound Value Breakdown", level=2)
@@ -901,3 +952,4 @@ except Exception as e:
     print(f"Report generated: {docx_name}")
     print(f"PDF export failed: {e}")
     print("If you want automatic PDF export, install `docx2pdf` and ensure Word/LibreOffice is available.")
+
