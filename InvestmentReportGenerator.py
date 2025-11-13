@@ -963,6 +963,19 @@ pdf_name = f"Investment_Report_{today_str}.pdf"
 
 doc.save(docx_name)
 
+# ----------------------------------------------------------------
+# IMPORTANT: Prevent old/cached DOCX from being used by docx2pdf
+# ----------------------------------------------------------------
+# If a PDF with the same name already exists, remove it
+if os.path.exists(pdf_name):
+    os.remove(pdf_name)
+
+# Touch the DOCX file so Windows/Word sees it as freshly updated
+# (fixes "Prepared for: Your Mom" bug caused by stale cached file)
+if os.path.exists(docx_name):
+    os.utime(docx_name, None)
+
+
 pdf_created = False
 try:
     convert(docx_name, pdf_name)
