@@ -4,6 +4,7 @@
 # and real-time MTD / YTD benchmark comparisons
 # ==============================================================
 
+import os
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -15,7 +16,6 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx2pdf import convert
-import os  # <-- ADDED: for Colab/Drive path resolution
 
 # -------------------------- Formatting --------------------------
 
@@ -33,28 +33,38 @@ def fmt_dollar(x):
 
 # ----------------------------- CONFIG -----------------------------
 
-def _resolve_input_path(filename: str) -> str:
-    """
-    Make script work both locally (GitHub/desktop) and in Colab with Drive.
+# Universal base directory detection:
+# - If PORTFOLIO_INPUT_DIR env var is set, use that
+# - Else if running in Colab and Drive folder exists, use:
+#       /content/drive/MyDrive/Investment Report Inputs
+# - Else default to current directory (GitHub/local)
+def _detect_base_input_dir():
+    env_dir = os.environ.get("PORTFOLIO_INPUT_DIR")
+    if env_dir:
+        return env_dir
 
-    - If running in Colab and the 'Investment Report Inputs' folder in Drive
-      contains the file, use that.
-    - Otherwise, fall back to the local filename.
-    """
+    # Try to detect Colab
     try:
-        drive_base = "/content/drive/MyDrive/Investment Report Inputs"
-        candidate = os.path.join(drive_base, filename)
-        if os.path.exists(candidate):
-            return candidate
+        import google.colab  # type: ignore
+        in_colab = True
     except Exception:
-        pass
-    return filename
+        in_colab = False
 
-# Your holdings file in the repo
-HOLDINGS_CSV = _resolve_input_path("sample holdings.csv")
+    if in_colab:
+        drive_path = "/content/drive/MyDrive/Investment Report Inputs"
+        if os.path.isdir(drive_path):
+            return drive_path
+        return "/content"
+
+    return "."
+
+BASE_INPUT_DIR = _detect_base_input_dir()
+
+# Your holdings file (same filenames as before, just joined to base dir)
+HOLDINGS_CSV = os.path.join(BASE_INPUT_DIR, "sample holdings.csv")
 
 # Optional: per-asset-class target file (asset_class,target_pct)
-ASSET_TARGETS_CSV = _resolve_input_path("targets_asset.csv")   # if missing, it's fine
+ASSET_TARGETS_CSV = os.path.join(BASE_INPUT_DIR, "targets_asset.csv")   # if missing, it's fine
 
 # How to split an asset-class target across its tickers:
 #   "value" -> proportional to current market value (default)
@@ -502,6 +512,7 @@ else:
 # ------------------ 10) RISK & VOLATILITY (CLEANED) ------------------
 
 present_assets = sorted(set(asset_df["asset_class"]))
+
 risk_rows = []
 for ac in present_assets:
     base = RISK_RETURN.get(ac)
