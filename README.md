@@ -1,99 +1,115 @@
-# 📈 Investment Report Generator
+📈 Live Portfolio Report Generator (Python)
 
-A compact Python tool that generates a professional **Word (.docx)** and **PDF** investment report from your portfolio CSV.  
-Uses **live prices**, calculates **targets**, and shows **exact contributions needed** to reach your desired portfolio value.
+This project generates a fully automated, professional investment report using live market data. It outputs a polished Word (DOCX) report — and optionally PDF — complete with tables, charts, allocation analysis, benchmark comparisons, and long-term projections.
 
----
+Perfect for personal finance tracking, monthly reviews, or sharing with clients.
 
-## ⚙️ Manual Controls (CONFIG Section)
+🚀 Features
+✔ Live Market Data
 
-Set these at the top of `InvestmentReportGenerator.py`:
+Auto-fetches current prices via yfinance
 
-```python
-HOLDINGS_CSV = "sample holdings.csv"        # Required input
-ASSET_TARGETS_CSV = "targets_asset.csv"     # Optional asset-class targets
+Calculates 1D / 1W / 1M / 3M / 6M returns
 
-TARGET_SPLIT_METHOD = "value"               # or "equal"
-TARGET_PORTFOLIO_VALUE = 50000.0            # Use number → enables contribution-to-target
-                                            # Set to None → disable target portfolio mode
+Converts returns to $ profit/loss
 
-monthly_contrib = 250.0                     # Used in growth projections
-RISK_FREE_RATE = 0.04                       # Used in risk charts
-```
+✔ Allocation Analysis
 
----
+Actual vs Target allocations
 
-## 📄 Required & Optional Inputs
+Over/underweight analysis
 
-### **1️⃣ sample holdings.csv (required)**  
-Columns:
+Automatic rebalancing dollars required
 
-- `ticker`
-- `shares`
-- `asset_class`
-- `target_pct` *(optional)* → overrides all other targets
+Sector & geography breakdowns
 
-### **2️⃣ targets_asset.csv (optional)**  
-Only used when no per-ticker `target_pct` is supplied.  
-Defines percent allocation per asset class.
+✔ Benchmark Comparisons
 
----
+Portfolio vs:
 
-## 🎯 Target Allocation Priority
+S&P 500
 
-1. **Per-ticker target_pct**  
-2. **Asset-class targets (targets_asset.csv)**  
-3. **Equal-weight fallback**
+Global 60/40
 
----
+Conservative 40/60
 
-## ▶️ How to Run
+MTD & YTD comparison tables
 
-```
-python InvestmentReportGenerator.py
-```
+Excess return calculations
 
-Creates:
+✔ Future Projections
 
-- `Investment_Report_YYYY-MM-DD.docx`
-- `Investment_Report_YYYY-MM-DD.pdf` (requires Word or LibreOffice)
+5%, 7%, 9% CAGR scenarios
 
----
+With and without monthly contributions
 
-## 📊 Report Contents (Compact Overview)
+Compound value breakdown chart
 
-- **Executive Summary**
-- **Overall Summary**
-  - Current portfolio value  
-  - *Target portfolio value (if enabled)*
-- **Holdings by Ticker**
-  - Live price, value, actual %, target %, contribution needed  
-  - **Includes TOTAL ROW**
-- **Asset Class Overview**
-  - Actual %, target %, delta  
-  - **Includes TOTAL ROW**
-- **Performance Metrics**
-  - MTD / YTD vs benchmarks
-  - 1D / 1W / 1M / 3M / 6M returns
-- **Visuals**
-  - Allocation pies  
-  - Sector heatmap  
-  - Benchmark bars  
-  - Growth projections  
-  - Contributions vs growth  
-  - Risk & return charts
+✔ Beautiful Report Output
 
----
+The script auto-builds a polished Word report:
 
-## ✔ Output Summary
+Cover page
 
-You get a **complete printable investment report** with:
+Executive summary
 
-- Allocation analysis  
-- Target-based rebalancing guidance  
-- Growth expectations  
-- Risk visualizations  
-- Performance comparisons  
+Holdings tables
 
-Ready for personal use, advisors, or clients.
+Charts (allocation, benchmarks, growth, volatility)
 
+Multi-horizon returns & $ P/L tables
+
+📂 Input Files Required
+1. Holdings CSV (required)
+
+Format:
+
+ticker,shares,asset_class
+AAPL,10,US Equities
+MSFT,5,US Equities
+VOO,7,US Equities
+VXUS,10,International Equity
+BND,15,Fixed Income
+GLD,2,Precious Metals
+XLE,4,Energy
+BTC-USD,0.1,Digital Assets
+
+2. Asset Targets CSV (optional)
+asset_class,target_pct
+US Equities,40
+International Equity,20
+Fixed Income,20
+Energy,10
+Digital Assets,5
+Precious Metals,5
+
+
+If omitted → allocations default to equal-weight across holdings.
+
+▶️ Running the Script
+Local (Windows / macOS)
+pip install yfinance python-docx pandas numpy matplotlib docx2pdf
+python update_portfolio_report_v3.py
+
+
+On Windows/macOS with Microsoft Word installed → a PDF is auto-generated.
+
+Google Colab
+
+The script auto-detects Colab.
+Upload your CSVs to:
+
+/content/drive/MyDrive/Investment Report Inputs/
+
+
+Then run normally.
+
+📤 Output
+
+You’ll get:
+
+Investment_Report_YYYY-MM-DD.docx
+Investment_Report_YYYY-MM-DD.pdf (if supported)
+
+
+Optional auto-copy into Google Drive or other output folders.
