@@ -204,21 +204,23 @@ def build_portfolio_value_series(df_holdings: pd.DataFrame,
                                  end_date) -> pd.Series:
     """
     Build a daily portfolio value series from holdings (ticker + shares)
-    and yfinance price history.
+    and yfinance price history, using plain Close prices so that TWR,
+    benchmarks, and valuation are all on the same basis.
     """
     tickers = df_holdings["ticker"].astype(str).unique().tolist()
     shares = df_holdings.set_index("ticker")["shares"].astype(float)
 
     all_series = []
+
     for t in tickers:
         try:
             hist = yf.download(t, start=start_date, end=end_date, progress=False)
-            if hist.empty:
+            if hist.empty or "Close" not in hist.columns:
                 continue
-            if "Adj Close" in hist.columns:
-                prices = hist["Adj Close"].astype(float)
-            else:
-                prices = hist["Close"].astype(float)
+
+            # Use plain closing prices for consistency with the rest of the script
+            prices = hist["Close"].astype(float)
+
             values = prices * float(shares.get(t, 0.0))
             values.name = t
             all_series.append(values)
