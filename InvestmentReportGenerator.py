@@ -253,11 +253,28 @@ def twr_over_period(portfolio_values: pd.Series,
     start_ts = pd.to_datetime(start_date)
     end_ts = pd.to_datetime(end_date)
 
-    # If tz-aware, convert to naive
+    # If tz-aware, drop the timezone so we match the yfinance index
     if getattr(start_ts, "tz", None) is not None:
-        start_ts = start_ts.tz_convert(None)
+        start_ts = start_ts.tz_localize(None)
     if getattr(end_ts, "tz", None) is not None:
-        end_ts = end_ts.tz_convert(None)
+        end_ts = end_ts.tz_localize(None)
+
+    series = portfolio_values[
+        (portfolio_values.index >= start_ts)
+        & (portfolio_values.index <= end_ts)
+    ].sort_index()
+
+    if len(series) < 2:
+        return np.nan, np.nan
+
+    daily_ret = series.pct_change().dropna()
+    if daily_ret.empty:
+        return np.nan, np.nan
+
+    growth = float((1.0 + daily_ret).prod())
+    twr_pct = (growth - 1.0) * 100.0
+    total_pl = float(series.iloc[-1] - series.iloc[0])
+    return float(twr_pct), float(total_pl)
 
 
     series = portfolio_values[
