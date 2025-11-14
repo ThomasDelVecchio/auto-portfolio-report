@@ -80,7 +80,7 @@ to avoid hardcoding paths.
 3. Run the script:
 
    ```bash
-   python live_portfolio_report.py
+   InvestmentReportGenerator.py
    ```
 
 4. Output:
