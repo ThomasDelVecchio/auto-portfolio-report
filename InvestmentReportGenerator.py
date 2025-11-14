@@ -1,5 +1,4 @@
 # ==============================================================
-# update_portfolio_report_v3.py
 # Live portfolio report with allocation, diversification,
 # and real-time MTD / YTD benchmark comparisons
 # ==============================================================
@@ -335,19 +334,20 @@ df["contribute_to_target"] = np.where(
 # -------- 3) SECTOR & GEOGRAPHIC (simple illustrative weights) --------
 
 sector_weights = {
-    "Information Technology": 32,
+    "Tech": 32,
     "Financials": 12,
-    "Healthcare": 11,
+    "Health Care": 11,
     "Industrials": 9,
-    "Consumer Discretionary": 10,
-    "Communication Services": 8,
+    "Cons. Disc.": 10,
+    "Comm. Services": 8,
     "Energy": 4,
     "Materials": 3,
     "Real Estate": 3,
     "Utilities": 3,
-    "Bitcoin / Digital Assets": 3,
-    "Gold / Precious Metals": 2,
+    "Digital Assets": 3,
+    "Precious Metals": 2,
 }
+
 sector_df_static = pd.DataFrame(
     {"Sector": list(sector_weights.keys()), "Weight": list(sector_weights.values())}
 )
@@ -581,14 +581,18 @@ plt.close()
 
 years_compound = list(range(0, 21))
 rate_for_compound = 0.07
+initial_balance = total_value
+
 contrib_values, growth_values = [], []
 for y in years_compound:
     total_with_contrib = future_value_with_contrib(
-        total_value, rate_for_compound, y, monthly_contrib
+        initial_balance, rate_for_compound, y, monthly_contrib
     )
-    total_contrib = monthly_contrib * 12 * y
+    # All dollars you've put in: today's balance + future contributions
+    total_contrib = initial_balance + monthly_contrib * 12 * y
     contrib_values.append(total_contrib)
     growth_values.append(max(total_with_contrib - total_contrib, 0))
+
 
 plt.figure(figsize=(6, 4))
 plt.stackplot(
@@ -599,11 +603,13 @@ plt.stackplot(
     colors=[COLOR_MAIN[0], COLOR_MAIN[1]],
     alpha=0.85,
 )
+
 plt.title(
-    "Compound Value Breakdown (Contributions vs Growth — assumes 7% annual return)",
+    "Contributions vs Growth",
     fontsize=12,
     weight="bold",
 )
+
 plt.xlabel("Years")
 plt.ylabel("Portfolio Value ($)")
 plt.legend(loc="upper left", fontsize=8)
@@ -1186,6 +1192,57 @@ add_table(
     right_align_cols=[2, 3, 4, 5, 6, 7],
 )
 
+# --------- Illustrative Monthly Contribution Schedule (Table) ---------
+if monthly_contrib > 0 and not df.empty:
+    # Positive gaps only (how much each ticker needs to reach its target)
+    need_series = df["contribute_to_target"].clip(lower=0).fillna(0)
+    total_need_schedule = float(need_series.sum())
+
+    if total_need_schedule > 0:
+        sched_rows = []
+        for _, row in df.iterrows():
+            gap = float(row.get("contribute_to_target") or 0.0)
+            if gap <= 0:
+                continue
+
+            share = gap / total_need_schedule        # fraction of total shortfall
+            monthly_dollars = monthly_contrib * share
+
+            sched_rows.append(
+                [
+                    row["ticker"],
+                    row["asset_class"],
+                    fmt_dollar(gap),
+                    fmt_dollar(monthly_dollars),
+                    f"{share * 100:.1f}%",
+                ]
+            )
+
+        if sched_rows:
+            # Approximate months of contributions to close current gaps,
+            # assuming flat markets and this allocation split
+            portfolio_months_to_target = total_need_schedule / monthly_contrib
+
+            h_sched = doc.add_heading(
+                "Illustrative Monthly Contribution Schedule", level=2
+            )
+            h_sched.paragraph_format.space_before = Pt(10)
+
+            add_table(
+                ["Ticker", "Asset Class", "Gap to Target ($)", "Suggested Monthly ($)", "Share of Monthly %"],
+                sched_rows,
+                right_align_cols=[2, 3, 4],
+            )
+
+            p_sched_note = doc.add_paragraph(
+                f"At approximately ${monthly_contrib:,.0f}/month, this schedule would allocate "
+                f"contributions proportionally to each holding's shortfall. In total, it would "
+                f"take about {portfolio_months_to_target:.1f} months of contributions to fully "
+                "close the current gaps, assuming markets are flat and this allocation is followed."
+            )
+            p_sched_note.paragraph_format.space_before = Pt(4)
+
+
 # Asset Class Allocation Overview
 h_ac = doc.add_heading("Asset Class Allocation Overview", level=2)
 h_ac.paragraph_format.space_before = Pt(12)
@@ -1314,20 +1371,35 @@ mtd_rows, ytd_rows = [], []
 for _, row in bench_df.iterrows():
     if row["Benchmark"] == "Portfolio (Live)":
         continue
+
+    port_mtd_val = port_row.get("MTD %")
+    bench_mtd_val = row["MTD %"]
+    if pd.isna(port_mtd_val) or pd.isna(bench_mtd_val):
+        excess_mtd = None
+    else:
+        excess_mtd = float(port_mtd_val) - float(bench_mtd_val)
+
+    port_ytd_val = port_row.get("YTD %")
+    bench_ytd_val = row["YTD %"]
+    if pd.isna(port_ytd_val) or pd.isna(bench_ytd_val):
+        excess_ytd = None
+    else:
+        excess_ytd = float(port_ytd_val) - float(bench_ytd_val)
+
     mtd_rows.append(
         [
             row["Benchmark"],
-            fmt_pct(port_row.get("MTD %")),
-            fmt_pct(row["MTD %"]),
-            fmt_pct((port_row.get("MTD %") or np.nan) - (row["MTD %"] or np.nan)),
+            fmt_pct(port_mtd_val),
+            fmt_pct(bench_mtd_val),
+            fmt_pct(excess_mtd),
         ]
     )
     ytd_rows.append(
         [
             row["Benchmark"],
-            fmt_pct(port_row.get("YTD %")),
-            fmt_pct(row["YTD %"]),
-            fmt_pct((port_row.get("YTD %") or np.nan) - (row["YTD %"] or np.nan)),
+            fmt_pct(port_ytd_val),
+            fmt_pct(bench_ytd_val),
+            fmt_pct(excess_ytd),
         ]
     )
 
@@ -1423,12 +1495,17 @@ add_table(
 doc.add_paragraph()
 doc.add_heading("Compound Value Breakdown", level=2)
 doc.add_picture(compound_stream, width=Inches(6))
-p = doc.add_paragraph(
-    "Figure 4: Based on a 7% annual return. Shows how much comes from your contributions vs market growth."
-)
-p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-doc.add_paragraph()
+# Shorter, tighter caption so the chart can be taller on the page
+p = doc.add_paragraph("Figure 4: Illustrates how monthly contributions and compound market growth each drive total portfolio value over 20 years at a 7% annual return.")
+p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+p.paragraph_format.space_before = Pt(2)
+p.paragraph_format.space_after = Pt(4)
+
+# 👉 New: start a fresh page for all remaining visuals together
+doc.add_page_break()
+
+
 doc.add_heading("20-Year Projection Scenarios", level=2)
 contrib_label = f"+${int(monthly_contrib):,}/mo"
 proj_headers = [
@@ -1457,28 +1534,38 @@ add_table(
 doc.add_paragraph()
 doc.add_picture(growth_stream, width=Inches(6))
 p = doc.add_paragraph(
-    "Figure 5: Long-term projections under different return and contribution assumptions."
+    "Figure 5: Variable long-term projections."
 )
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-# Risk & Volatility
-doc.add_page_break()
+# Risk & Volatility  (no page break here anymore)
 doc.add_heading("Risk & Volatility Analysis", level=1)
 
-doc.add_heading("Expected Volatility by Asset Class", level=2)
-doc.add_picture(vol_stream, width=Inches(5.5))
+# --- Risk Charts (Wider + Shorter + Tight Spacing) ---
+
+h_vol = doc.add_heading("Expected Volatility by Asset Class", level=2)
+h_vol.paragraph_format.space_before = Pt(4)
+h_vol.paragraph_format.space_after = Pt(2)
+
+doc.add_picture(vol_stream, width=Inches(5.25), height=Inches(3.4))
 p = doc.add_paragraph(
     "Figure 6: Approximate volatility (standard deviation) by asset class."
 )
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+p.paragraph_format.space_before = Pt(1)
+p.paragraph_format.space_after = Pt(12)
 
-doc.add_paragraph()
-doc.add_heading("Risk vs Expected Return", level=2)
-doc.add_picture(risk_stream, width=Inches(5.5))
+h_risk = doc.add_heading("Risk vs Expected Return", level=2)
+h_risk.paragraph_format.space_before = Pt(4)
+h_risk.paragraph_format.space_after = Pt(2)
+
+doc.add_picture(risk_stream, width=Inches(5.25), height=Inches(3.4))
 p = doc.add_paragraph(
     "Figure 7: Trade-off between expected return and volatility by asset class."
 )
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+p.paragraph_format.space_before = Pt(1)
+p.paragraph_format.space_after = Pt(0)
 
 
 # ------------------------- 13) SAVE DOCX + PDF ------------------------
