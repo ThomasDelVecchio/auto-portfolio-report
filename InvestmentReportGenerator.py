@@ -56,6 +56,16 @@ def fmt_pct(x):
     return f"{x:+.2f}%"
 
 
+def fmt_pct_level(x):
+    """
+    For level percentages (e.g., allocation %), no +/− sign.
+    """
+    import math
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return "-"
+    return f"{x:.2f}%"
+
+
 def fmt_dollar(x):
     import math
     if x is None or (isinstance(x, float) and math.isnan(x)):
@@ -186,6 +196,86 @@ def get_1d_return_pct(ticker):
         return (last_price / prev_close - 1.0) * 100.0
     except Exception:
         return np.nan
+
+# --------- Portfolio value series & chain-linked TWR helpers ---------
+
+def build_portfolio_value_series(df_holdings: pd.DataFrame,
+                                 start_date,
+                                 end_date) -> pd.Series:
+    """
+    Build a daily portfolio value series from holdings (ticker + shares)
+    and yfinance price history.
+    """
+    tickers = df_holdings["ticker"].astype(str).unique().tolist()
+    shares = df_holdings.set_index("ticker")["shares"].astype(float)
+
+    all_series = []
+    for t in tickers:
+        try:
+            hist = yf.download(t, start=start_date, end=end_date, progress=False)
+            if hist.empty:
+                continue
+            if "Adj Close" in hist.columns:
+                prices = hist["Adj Close"].astype(float)
+            else:
+                prices = hist["Close"].astype(float)
+            values = prices * float(shares.get(t, 0.0))
+            values.name = t
+            all_series.append(values)
+        except Exception:
+            continue
+
+    if not all_series:
+        return pd.Series(dtype=float)
+
+    df_vals = pd.concat(all_series, axis=1)
+    port_vals = df_vals.sum(axis=1)
+    port_vals = port_vals.sort_index()
+    port_vals.name = "Portfolio"
+    return port_vals
+
+
+def twr_over_period(portfolio_values: pd.Series,
+                    start_date,
+                    end_date):
+    """
+    Time-weighted return over [start_date, end_date] using daily chain-linking.
+
+    Returns:
+        (twr_pct, dollar_pl)
+            twr_pct  = (%), e.g. 3.45 means +3.45%
+            dollar_pl = end_value - start_value
+    """
+    if portfolio_values is None or portfolio_values.empty:
+        return np.nan, np.nan
+
+    # Normalize dates to tz-naive to match yfinance index
+    start_ts = pd.to_datetime(start_date)
+    end_ts = pd.to_datetime(end_date)
+
+    # If tz-aware, convert to naive
+    if getattr(start_ts, "tz", None) is not None:
+        start_ts = start_ts.tz_convert(None)
+    if getattr(end_ts, "tz", None) is not None:
+        end_ts = end_ts.tz_convert(None)
+
+
+    series = portfolio_values[
+        (portfolio_values.index >= start_ts)
+        & (portfolio_values.index <= end_ts)
+    ].sort_index()
+
+    if len(series) < 2:
+        return np.nan, np.nan
+
+    daily_ret = series.pct_change().dropna()
+    if daily_ret.empty:
+        return np.nan, np.nan
+
+    growth = float((1.0 + daily_ret).prod())
+    twr_pct = (growth - 1.0) * 100.0
+    total_pl = float(series.iloc[-1] - series.iloc[0])
+    return float(twr_pct), float(total_pl)
 
 
 def read_asset_targets(path: str) -> pd.DataFrame | None:
@@ -492,6 +582,7 @@ start_month = (today.replace(day=1) - pd.offsets.BMonthEnd(1))
 # Last business day before Jan 1
 start_year = (datetime(today.year, 1, 1) - pd.offsets.BMonthEnd(1))
 
+# --- Benchmark returns (simple price returns, which are effectively TWR for indices) ---
 
 bench_rows = []
 for name, ticker in benchmarks.items():
@@ -505,37 +596,29 @@ for name, ticker in benchmarks.items():
         }
     )
 
-port_changes_mtd, port_changes_ytd, weights = [], [], []
-for _, row in df.iterrows():
-    t = row["ticker"]
-    w = row["allocation_pct"]
-    mtd = get_return_pct(t, start_month, today)
-    ytd = get_return_pct(t, start_year, today)
-    if np.isnan(mtd) or np.isnan(ytd):
-        continue
-    port_changes_mtd.append(mtd)
-    port_changes_ytd.append(ytd)
-    weights.append(w)
+# --- Portfolio TWR (daily chain-linked) for 1D / MTD / YTD ---
 
+# Build portfolio daily value series starting from start_year
+portfolio_values = build_portfolio_value_series(df, start_year, today)
 
-def weighted_avg(values, weights):
-    if not values:
-        return np.nan
-    v = np.array(values, dtype=float)
-    w = np.array(weights, dtype=float)
+# 1D TWR: use last two available portfolio valuation points
+summary_1d_return = np.nan
+total_1d_pl = float("nan")
 
-    s = w.sum()
-    if s == 0:
-        return np.nan
+if portfolio_values is not None and not portfolio_values.empty:
+    pv = portfolio_values.dropna()
+    if len(pv) >= 2:
+        last_two = pv.iloc[-2:]
+        daily_ret = last_two.pct_change().dropna()
+        if not daily_ret.empty:
+            summary_1d_return = float(daily_ret.iloc[-1] * 100.0)
+        total_1d_pl = float(last_two.iloc[-1] - last_two.iloc[0])
 
-    w = w / s  # normalize
-    return float((v * w).sum())
+# MTD and YTD TWR using the same portfolio value series
+port_mtd, total_mtd_pl = twr_over_period(portfolio_values, start_month, today)
+port_ytd, total_ytd_pl = twr_over_period(portfolio_values, start_year, today)
 
-
-
-port_mtd = weighted_avg(port_changes_mtd, weights)
-port_ytd = weighted_avg(port_changes_ytd, weights)
-
+# Insert portfolio as the first "benchmark" row for downstream tables / charts
 bench_rows.insert(
     0,
     {
@@ -546,6 +629,7 @@ bench_rows.insert(
 )
 
 bench_df = pd.DataFrame(bench_rows)
+
 
 
 # --------- 6) HOLDINGS MULTI-HORIZON RETURNS (1D, 1W, 1M, 3M, 6M) ---------
@@ -609,6 +693,21 @@ def dollar_pl_from_return(current_value, pct):
     return current_value - start_val
 
 
+# ---- Weighted Average Helper (used for TOTAL row in returns table) ----
+def weighted_avg(values, weights):
+    if not values:
+        return np.nan
+    v = np.array(values, dtype=float)
+    w = np.array(weights, dtype=float)
+
+    s = w.sum()
+    if s == 0:
+        return np.nan
+
+    w = w / s  # normalize
+    return float((v * w).sum())
+
+
 returns_by_ticker = returns_df.set_index("Ticker")
 
 dollar_pl_rows = []
@@ -631,6 +730,7 @@ for _, h_row in df.iterrows():
     dollar_pl_rows.append(row)
 
 dollar_pl_df = pd.DataFrame(dollar_pl_rows)
+
 
 
 # ---------------- 7) LONG-TERM PROJECTIONS (20 YEARS) -----------------
@@ -968,32 +1068,11 @@ summary_total_value = total_value
 summary_target_value = TARGET_PORTFOLIO_VALUE
 summary_num_holdings = len(df)
 
-# Portfolio-level 1D return (weighted by allocation %)
-summary_1d_return = np.nan
-if not returns_df.empty:
-    try:
-        tmp = returns_df.merge(
-            df[["ticker", "allocation_pct"]],
-            left_on="Ticker",
-            right_on="ticker",
-            how="inner",
-        )
-        vals = tmp["1D %"].to_numpy(dtype=float)
-        wts = tmp["allocation_pct"].to_numpy(dtype=float)
-        mask = ~np.isnan(vals) & ~np.isnan(wts)
-        if mask.any():
-            summary_1d_return = weighted_avg(
-                vals[mask].tolist(),
-                wts[mask].tolist(),
-            )
-    except Exception:
-        summary_1d_return = np.nan
-
-# Total P/L for key horizons
-total_1d_pl = float(dollar_pl_df["1D $"].sum(skipna=True)) if not dollar_pl_df.empty else float("nan")
-total_mtd_pl = dollar_pl_from_return(summary_total_value, port_mtd) if not np.isnan(port_mtd) else float("nan")
-total_ytd_pl = dollar_pl_from_return(summary_total_value, port_ytd) if not np.isnan(port_ytd) else float("nan")
-
+# NOTE:
+# summary_1d_return, total_1d_pl, total_mtd_pl, total_ytd_pl
+# are now computed in the TWR / benchmark section using portfolio_values
+# (portfolio value series). They are TRUE time-weighted returns and
+# fully consistent with the dollar P/L.
 
 # Join returns and $ P/L for ranking
 ret_pl = returns_df.merge(dollar_pl_df, on="Ticker", how="left")
@@ -1029,6 +1108,7 @@ if not ret_pl.empty:
             f"({fmt_pct(best_1d_row['1D %'])}, "
             f"{fmt_dollar(best_1d_row.get('1D $'))})"
         )
+
 
 # Top 3 holdings concentration
 if summary_num_holdings > 0:
@@ -1257,7 +1337,7 @@ add_table(
 h_rd = doc.add_heading("Risk & Diversification", level=2)
 h_rd.paragraph_format.space_before = Pt(10)
 
-top3_str = fmt_pct(top3_pct) if not np.isnan(top3_pct) else "-"
+top3_str = fmt_pct_level(top3_pct) if not np.isnan(top3_pct) else "-"
 largest_ac_str = (
     f"{largest_ac_name} ({largest_ac_pct:.2f}%)" if not np.isnan(largest_ac_pct) else "N/A"
 )
@@ -1309,7 +1389,7 @@ for _, row in df.iterrows():
             f"{row['shares']:.4f}",
             f"{row['price']:.2f}",
             f"{row['value']:.2f}",
-            f"{row['core_allocation_pct']:.2f}%",
+            f"{row['allocation_pct']:.2f}%",  # use normalized allocation %
             f"{(row.get('target_pct') or 0.0):.2f}%",
             "-"
             if pd.isna(row.get("contribute_to_target"))
@@ -1347,6 +1427,7 @@ add_table(
     ticker_rows,
     right_align_cols=[2, 3, 4, 5, 6, 7],
 )
+
 
 # --------- Illustrative Monthly Contribution Schedule (Table) ---------
 if monthly_contrib > 0 and not df.empty:
@@ -1583,8 +1664,11 @@ add_table(
 doc.add_paragraph()
 doc.add_heading("Holdings Multi-Horizon Returns", level=2)
 doc.add_paragraph(
-    "Performance of each holding over multiple lookback periods, ranked by 6-month return:"
+    "Performance of each holding over multiple trailing lookback periods "
+    "(1D / 1W / 1M / 3M / 6M), ranked by 6-month return. "
+    "Note: MTD and YTD performance are shown separately at the portfolio level."
 )
+
 
 returns_sorted = returns_df.sort_values("6M %", ascending=False, na_position="last")
 rows = []
@@ -1600,27 +1684,34 @@ for _, r in returns_sorted.iterrows():
         ]
     )
 
-# ---- Composite portfolio row (weighted by allocation %) ----
+# ---- Composite portfolio row (portfolio-level for 1D, weighted for others) ----
 alloc_map = df.set_index("ticker")["allocation_pct"]
 total_row = ["TOTAL"]
 
 for col in ["1D %", "1W %", "1M %", "3M %", "6M %"]:
-    vals, wts = [], []
-    for _, r in returns_sorted.iterrows():
-        v = r[col]
-        if pd.isna(v):
-            continue
-        t = r["Ticker"]
-        w = float(alloc_map.get(t, np.nan))
-        if np.isnan(w):
-            continue
-        vals.append(v)
-        wts.append(w)
+    if col == "1D %":
+        # Use the same TWR-based 1D return as the Executive Summary
+        total_ret = summary_1d_return
+    else:
+        # Allocation-weighted average of constituent returns
+        vals, wts = [], []
+        for _, r in returns_sorted.iterrows():
+            v = r[col]
+            if pd.isna(v):
+                continue
+            t = r["Ticker"]
+            w = float(alloc_map.get(t, np.nan))
+            if np.isnan(w):
+                continue
+            vals.append(v)
+            wts.append(w)
 
-    total_ret = weighted_avg(vals, wts)
+        total_ret = weighted_avg(vals, wts)
+
     total_row.append(fmt_pct(total_ret) if not np.isnan(total_ret) else "-")
 
 rows.append(total_row)
+
 
 add_table(
     ["Ticker", "1D %", "1W %", "1M %", "3M %", "6M %"],
@@ -1665,9 +1756,14 @@ for _, r in dollar_pl_sorted.iterrows():
         ]
     )
 
-# ---- Composite portfolio P/L row (sum of dollars) ----
+# ---- Composite portfolio P/L row (use portfolio 1D P/L, sum for others) ----
 total_pl_row = ["TOTAL"]
-for col in ["1D $", "1W $", "1M $", "3M $", "6M $"]:
+
+# 1D $: use the same portfolio-level P/L as the Executive Summary
+total_pl_row.append(fmt_dollar(total_1d_pl))
+
+# Other horizons: sum of per-ticker dollar P/L
+for col in ["1W $", "1M $", "3M $", "6M $"]:
     total_val = float(dollar_pl_sorted[col].sum(skipna=True))
     total_pl_row.append(fmt_dollar(total_val))
 
