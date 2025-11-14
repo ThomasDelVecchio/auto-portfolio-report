@@ -15,6 +15,7 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 from docx2pdf import convert
 
 # -------------------------- Formatting --------------------------
@@ -449,6 +450,56 @@ for _, row in df.iterrows():
 
 returns_df = pd.DataFrame(returns_rows)
 
+# ---------- Dollar Profit/Loss for Each Horizon (using same math) ----------
+
+def dollar_pl_from_return(current_value, pct):
+    """
+    Convert a percentage return (end/start - 1) into a dollar P/L
+    using the current value as 'end'.
+
+    start_value = current_value / (1 + r)
+    P/L = current_value - start_value
+    """
+    import math
+    if pct is None or (isinstance(pct, float) and math.isnan(pct)):
+        return np.nan
+
+    r = float(pct) / 100.0
+    # Handle ~-100% edge case to avoid division by zero
+    if r <= -0.9999:
+        return -current_value
+
+    try:
+        start_val = current_value / (1.0 + r)
+    except ZeroDivisionError:
+        return np.nan
+
+    return current_value - start_val
+
+
+# Map returns_df by ticker for quick lookup
+returns_by_ticker = returns_df.set_index("Ticker")
+
+dollar_pl_rows = []
+for _, h_row in df.iterrows():
+    t = h_row["ticker"]
+    if t not in returns_by_ticker.index:
+        continue
+
+    cur_val = float(h_row["value"])
+    r_row = returns_by_ticker.loc[t]
+
+    row = {
+        "Ticker": t,
+        "1D $": dollar_pl_from_return(cur_val, r_row.get("1D %")),
+        "1W $": dollar_pl_from_return(cur_val, r_row.get("1W %")),
+        "1M $": dollar_pl_from_return(cur_val, r_row.get("1M %")),
+        "3M $": dollar_pl_from_return(cur_val, r_row.get("3M %")),
+        "6M $": dollar_pl_from_return(cur_val, r_row.get("6M %")),
+    }
+    dollar_pl_rows.append(row)
+
+dollar_pl_df = pd.DataFrame(dollar_pl_rows)
 
 
 # ---------------- 7) LONG-TERM PROJECTIONS (20 YEARS) -----------------
@@ -651,23 +702,56 @@ style.font.size = Pt(11)
 def add_table(headers, rows, right_align_cols=None):
     table = doc.add_table(rows=1, cols=len(headers))
     table.style = "Light Grid Accent 1"
+
+    # ----- header row -----
     hdr_cells = table.rows[0].cells
     for i, h in enumerate(headers):
         hdr_cells[i].text = h
         for p in hdr_cells[i].paragraphs:
             for r in p.runs:
                 r.bold = True
+
+    # ----- data rows -----
     for row_data in rows:
         row_cells = table.add_row().cells
         for i, val in enumerate(row_data):
             row_cells[i].text = str(val)
+
+    # ----- repeat header row on each page -----
+    hdr_row = table.rows[0]
+    tr = hdr_row._tr
+    trPr = tr.get_or_add_trPr()
+    tbl_header = OxmlElement("w:tblHeader")
+    trPr.append(tbl_header)
+
+    # ----- prevent splitting rows; keep rows together -----
+    row_count = len(table.rows)
+    for idx, row in enumerate(table.rows):
+        tr = row._tr
+        trPr = tr.get_or_add_trPr()
+
+        # don't allow a single row to be split across pages
+        cant_split = OxmlElement("w:cantSplit")
+        trPr.append(cant_split)
+
+        # keep each row with the next row (except the last one)
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                pf = p.paragraph_format
+                pf.keep_together = True
+                pf.keep_with_next = (idx < row_count - 1)
+
+    # ----- right–align numeric columns -----
     if right_align_cols is not None:
         for row in table.rows[1:]:
-            for idx in right_align_cols:
-                cell = row.cells[idx]
-                for p in cell.paragraphs:
-                    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            for col_idx in right_align_cols:
+                if col_idx < len(row.cells):
+                    cell = row.cells[col_idx]
+                    for p in cell.paragraphs:
+                        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
     return table
+
 
 # Cover
 doc.add_paragraph("\n\n\n\n\n")
@@ -900,6 +984,47 @@ add_table(
     right_align_cols=[1, 2, 3, 4, 5]
 )
 
+# ----------------- Dollar Profit/Loss Table Under Returns -----------------
+
+# Reorder dollar_pl_df to match the same ticker order (sorted by 6M %)
+dollar_pl_sorted = (
+    dollar_pl_df
+    .set_index("Ticker")
+    .reindex(returns_sorted["Ticker"])
+    .reset_index()
+)
+
+doc.add_paragraph("\n")
+
+# Heading + description should stay with the table (no page break between)
+p_title = doc.add_heading("Holdings Multi-Horizon Profit/Loss ($)", level=3)
+p_title.paragraph_format.keep_with_next = True
+
+p_desc = doc.add_paragraph(
+    "Approximate dollar profit/loss for each holding over the same lookback windows, "
+    "using the same return calculations as the percentage table above."
+)
+p_desc.paragraph_format.keep_with_next = True
+
+
+pl_rows = []
+for _, r in dollar_pl_sorted.iterrows():
+    pl_rows.append([
+        r["Ticker"],
+        fmt_dollar(r["1D $"]),
+        fmt_dollar(r["1W $"]),
+        fmt_dollar(r["1M $"]),
+        fmt_dollar(r["3M $"]),
+        fmt_dollar(r["6M $"]),
+    ])
+
+add_table(
+    ["Ticker", "1D $", "1W $", "1M $", "3M $", "6M $"],
+    pl_rows,
+    right_align_cols=[1, 2, 3, 4, 5]
+)
+
+
 doc.add_paragraph("\n")
 doc.add_heading("Compound Value Breakdown", level=2)
 doc.add_picture(compound_stream, width=Inches(6))
@@ -919,23 +1044,20 @@ proj_headers = [
     f"9% ({contrib_label})",
 ]
 
-proj_table = doc.add_table(rows=1, cols=len(proj_headers))
-proj_table.style = "Light Grid Accent 1"
-hdr_cells = proj_table.rows[0].cells
-for i, h in enumerate(proj_headers):
-    hdr_cells[i].text = h
-    for p in hdr_cells[i].paragraphs:
-        for r in p.runs:
-            r.bold = True
+# Convert proj_rows into simple list-of-lists for add_table
+proj_rows_for_table = []
 for row in proj_rows:
-    row_cells = proj_table.add_row().cells
-    row_cells[0].text = str(row[0])
+    formatted_row = [str(row[0])]
     for i in range(1, len(proj_headers)):
-        row_cells[i].text = f"{row[i]:,.0f}"
-for row in proj_table.rows[1:]:
-    for i in range(1, len(proj_headers)):
-        for p in row.cells[i].paragraphs:
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        formatted_row.append(f"{row[i]:,.0f}")
+    proj_rows_for_table.append(formatted_row)
+
+add_table(
+    proj_headers,
+    proj_rows_for_table,
+    right_align_cols=list(range(1, len(proj_headers)))
+)
+
 doc.add_paragraph("\n")
 doc.add_picture(growth_stream, width=Inches(6))
 p = doc.add_paragraph("Figure 5: Long-term projections under different return and contribution assumptions.")
