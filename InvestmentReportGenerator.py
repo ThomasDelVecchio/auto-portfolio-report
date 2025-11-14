@@ -771,6 +771,7 @@ plt.close()
 
 # ---------------------- 11) ALLOCATION PIE CHARTS ----------------------
 
+# --- Ticker-level allocation pie ---
 plt.figure(figsize=(6, 6))
 plt.pie(
     df["allocation_pct"],
@@ -779,25 +780,47 @@ plt.pie(
     startangle=90,
     pctdistance=0.85,
     labeldistance=1.05,
+    textprops={"fontsize": 9},
 )
 plt.title("Portfolio Allocation by Ticker", fontsize=12, weight="bold")
-plt.tight_layout()
+
+ax = plt.gca()
+ax.set_aspect("equal", adjustable="box")
+plt.subplots_adjust(left=0.15, right=0.85, top=0.85, bottom=0.15)
+
 ticker_pie_stream = BytesIO()
 plt.savefig(ticker_pie_stream, format="png", bbox_inches="tight", facecolor="white")
 ticker_pie_stream.seek(0)
 plt.close()
 
+# --- Asset-class allocation pie ---
+
+# Ensure all labels are strings before replacement
+ac_labels = []
+for name in asset_df["asset_class"]:
+    label = str(name)  # <-- FIX: cast to string safely
+    label = label.replace("International Equities", "Intl. Equities")
+    label = label.replace("Precious Metals", "Precious\nMetals")
+    label = label.replace("Fixed Income", "Fixed\nIncome")
+    label = label.replace("Global Bonds", "Global\nBonds")
+    ac_labels.append(label)
+
 plt.figure(figsize=(6, 6))
 plt.pie(
     asset_df["allocation_pct"],
-    labels=asset_df["asset_class"],
+    labels=ac_labels,
     autopct="%1.2f%%",
     startangle=90,
-    pctdistance=0.85,
-    labeldistance=1.05,
+    pctdistance=0.80,         # bring % labels inward
+    labeldistance=1.03,       # bring text inward
+    textprops={"fontsize": 8} # smaller font
 )
 plt.title("Asset Class Allocation", fontsize=12, weight="bold")
-plt.tight_layout()
+
+ax = plt.gca()
+ax.set_aspect("equal", adjustable="box")
+plt.subplots_adjust(left=0.15, right=0.85, top=0.85, bottom=0.15)
+
 asset_pie_stream = BytesIO()
 plt.savefig(asset_pie_stream, format="png", bbox_inches="tight", facecolor="white")
 asset_pie_stream.seek(0)
@@ -806,6 +829,134 @@ plt.close()
 
 # ------------------------- 12) BUILD WORD DOC --------------------------
 
+# ---- Executive Summary Metrics ----
+
+# Portfolio snapshot
+summary_total_value = total_value
+summary_target_value = TARGET_PORTFOLIO_VALUE
+summary_num_holdings = len(df)
+
+# Total 1M P/L (sum of per-ticker 1M dollars)
+total_1m_pl = float(dollar_pl_df["1M $"].sum(skipna=True)) if not dollar_pl_df.empty else float("nan")
+
+# Join returns and $ P/L for ranking
+ret_pl = returns_df.merge(dollar_pl_df, on="Ticker", how="left")
+
+top_1m_line = "N/A"
+bottom_1m_line = "N/A"
+best_1d_line = None  # optional
+
+if not ret_pl.empty:
+    # Top & bottom 1M performers
+    valid_1m = ret_pl.dropna(subset=["1M %"])
+    if not valid_1m.empty:
+        top_1m_row = valid_1m.sort_values("1M %", ascending=False).iloc[0]
+        top_1m_line = (
+            f"{top_1m_row['Ticker']} "
+            f"({fmt_pct(top_1m_row['1M %'])}, "
+            f"{fmt_dollar(top_1m_row.get('1M $'))})"
+        )
+
+        bottom_1m_row = valid_1m.sort_values("1M %", ascending=True).iloc[0]
+        bottom_1m_line = (
+            f"{bottom_1m_row['Ticker']} "
+            f"({fmt_pct(bottom_1m_row['1M %'])}, "
+            f"{fmt_dollar(bottom_1m_row.get('1M $'))})"
+        )
+
+    # Best 1D performer (optional)
+    valid_1d = ret_pl.dropna(subset=["1D %"])
+    if not valid_1d.empty:
+        best_1d_row = valid_1d.sort_values("1D %", ascending=False).iloc[0]
+        best_1d_line = (
+            f"{best_1d_row['Ticker']} "
+            f"({fmt_pct(best_1d_row['1D %'])}, "
+            f"{fmt_dollar(best_1d_row.get('1D $'))})"
+        )
+
+# Top 3 holdings concentration
+if summary_num_holdings > 0:
+    top3_pct = float(df["allocation_pct"].nlargest(min(3, summary_num_holdings)).sum())
+else:
+    top3_pct = float("nan")
+
+# Largest asset class by actual allocation
+if not asset_df.empty:
+    largest_ac_row = asset_df.sort_values("allocation_pct", ascending=False).iloc[0]
+    largest_ac_name = largest_ac_row["asset_class"]
+    largest_ac_pct = float(largest_ac_row["allocation_pct"])
+else:
+    largest_ac_name = "N/A"
+    largest_ac_pct = float("nan")
+
+# Overweight / underweight asset classes vs targets
+largest_overweight_str = "N/A"
+largest_underweight_str = "N/A"
+
+if asset_targets_df is not None and not asset_targets_df.empty:
+    ac_compare_for_summary = asset_df.merge(
+        asset_targets_df, on="asset_class", how="left", suffixes=("", "_target")
+    )
+    ac_compare_for_summary["target_pct"] = ac_compare_for_summary["target_pct"].fillna(0.0)
+    ac_compare_for_summary["delta_pct"] = (
+        ac_compare_for_summary["allocation_pct"] - ac_compare_for_summary["target_pct"]
+    )
+
+    ow = ac_compare_for_summary[ac_compare_for_summary["delta_pct"] > 0]
+    uw = ac_compare_for_summary[ac_compare_for_summary["delta_pct"] < 0]
+
+    if not ow.empty:
+        ow_row = ow.sort_values("delta_pct", ascending=False).iloc[0]
+        largest_overweight_str = (
+            f"{ow_row['asset_class']} "
+            f"({ow_row['allocation_pct']:.2f}% vs {ow_row['target_pct']:.2f}%)"
+        )
+
+    if not uw.empty:
+        uw_row = uw.sort_values("delta_pct", ascending=True).iloc[0]
+        largest_underweight_str = (
+            f"{uw_row['asset_class']} "
+            f"({uw_row['allocation_pct']:.2f}% vs {uw_row['target_pct']:.2f}%)"
+        )
+
+# Rebalancing need & % of tickers on target (within ±5% band)
+rebalance_need = float(df["contribute_to_target"].fillna(0).sum()) if not df.empty else 0.0
+
+pct_tickers_on_target = None
+if "target_pct" in df.columns and not df["target_pct"].isna().all():
+    has_target = df["target_pct"].fillna(0) > 0
+    n_with_target = int(has_target.sum())
+    if n_with_target > 0:
+        drift = (df.loc[has_target, "allocation_pct"] - df.loc[has_target, "target_pct"]).abs()
+        within_band = drift <= 5.0  # within ±5% band
+        pct_tickers_on_target = float(within_band.mean() * 100.0)
+
+# Benchmark positioning vs S&P 500 (excess returns MTD/YTD)
+vs_sp500_mtd_str = "N/A"
+vs_sp500_ytd_str = "N/A"
+
+try:
+    bench_df["MTD %"] = pd.to_numeric(bench_df["MTD %"], errors="coerce")
+    bench_df["YTD %"] = pd.to_numeric(bench_df["YTD %"], errors="coerce")
+
+    if (
+        "Portfolio (Live)" in bench_df["Benchmark"].values
+        and "S&P 500" in bench_df["Benchmark"].values
+    ):
+        port_row = bench_df.loc[bench_df["Benchmark"] == "Portfolio (Live)"].iloc[0]
+        sp_row = bench_df.loc[bench_df["Benchmark"] == "S&P 500"].iloc[0]
+
+        if not pd.isna(port_row["MTD %"]) and not pd.isna(sp_row["MTD %"]):
+            vs_sp500_mtd = float(port_row["MTD %"] - sp_row["MTD %"])
+            vs_sp500_mtd_str = fmt_pct(vs_sp500_mtd)
+
+        if not pd.isna(port_row["YTD %"]) and not pd.isna(sp_row["YTD %"]):
+            vs_sp500_ytd = float(port_row["YTD %"] - sp_row["YTD %"])
+            vs_sp500_ytd_str = fmt_pct(vs_sp500_ytd)
+except Exception:
+    pass
+
+# Now create the document
 doc = Document()
 style = doc.styles["Normal"]
 style.font.name = "Calibri"
@@ -894,32 +1045,99 @@ doc.add_page_break()
 
 # Executive Summary
 doc.add_heading("Executive Summary", level=1)
+
+# Short intro paragraph
 doc.add_paragraph(
-    f"This report summarizes your current portfolio based on live market data. "
-    f"Total portfolio value is approximately ${total_value:,.0f}. "
-    f"Targets can be supplied per-ticker or per-asset-class via CSV."
+    "This executive summary provides a high-level snapshot of your portfolio using live market data, "
+    "including valuation, recent performance, diversification, rebalancing needs, and positioning versus key benchmarks."
 )
 
-# Overall Summary
-doc.add_heading("Overall Summary", level=1)
+# -------------------- Portfolio Snapshot (Table) --------------------
+h_ps = doc.add_heading("Portfolio Snapshot", level=2)
+h_ps.paragraph_format.space_before = Pt(6)
 
-overall_rows = [
-    ["Current Portfolio Value", f"{total_value:,.2f}", "Sum of all holdings at live prices"],
+snapshot_rows = []
+snapshot_rows.append(["Total Value", fmt_dollar(summary_total_value)])
+
+
+if summary_target_value is not None:
+    snapshot_rows.append(["Target Portfolio Value", fmt_dollar(summary_target_value)])
+
+snapshot_rows.append(["MTD Return", fmt_pct(port_mtd) if not np.isnan(port_mtd) else "-"])
+snapshot_rows.append(["YTD Return", fmt_pct(port_ytd) if not np.isnan(port_ytd) else "-"])
+snapshot_rows.append(["Total 1M P/L", fmt_dollar(total_1m_pl)])
+snapshot_rows.append(["Number of Holdings", str(summary_num_holdings)])
+
+add_table(
+    ["Metric", "Value"],
+    snapshot_rows,
+    right_align_cols=[1],
+)
+
+# ----------------- Performance Highlights (Table) -------------------
+h_ph = doc.add_heading("Performance Highlights", level=2)
+h_ph.paragraph_format.space_before = Pt(10)
+
+perf_rows = [
+
+    ["Top 1M Performer", top_1m_line],
+    ["Bottom 1M Performer", bottom_1m_line],
+    ["Best 1D Performer", best_1d_line if best_1d_line else "N/A"],
 ]
 
-if TARGET_PORTFOLIO_VALUE is not None:
-    overall_rows.append(
-        [
-            "Target Portfolio Value",
-            f"{TARGET_PORTFOLIO_VALUE:,.2f}",
-            "Used for contribution-to-target calculations",
-        ]
-    )
+add_table(
+    ["Metric", "Value"],
+    perf_rows,
+    right_align_cols=[1],
+)
 
-add_table(["Category", "Amount ($)", "Notes"], overall_rows, right_align_cols=[1])
+# --------------- Risk & Diversification (Table) ---------------------
+h_rd = doc.add_heading("Risk & Diversification", level=2)
+h_rd.paragraph_format.space_before = Pt(10)
+
+top3_str = fmt_pct(top3_pct) if not np.isnan(top3_pct) else "-"
+largest_ac_str = (
+    f"{largest_ac_name} ({largest_ac_pct:.2f}%)" if not np.isnan(largest_ac_pct) else "N/A"
+)
+
+risk_rows = [
+    ["Top 3 holdings % of portfolio", top3_str],
+    ["Largest asset class", largest_ac_str],
+    ["Largest overweight", largest_overweight_str],
+    ["Largest underweight", largest_underweight_str],
+]
+
+add_table(
+    ["Metric", "Value"],
+    risk_rows,
+    right_align_cols=[1],
+)
+
+# --------- Rebalancing & Benchmark Positioning (Table) --------------
+h_rb = doc.add_heading("Rebalancing & Benchmark Positioning", level=2)
+h_rb.paragraph_format.space_before = Pt(10)
+
+pct_target_str = f"{pct_tickers_on_target:.1f}%" if pct_tickers_on_target is not None else "N/A"
+
+reb_bench_rows = [
+    ["Rebalancing need", fmt_dollar(rebalance_need)],
+    ["% of tickers on target (±5% band)", pct_target_str],
+    ["Vs S&P 500 MTD", vs_sp500_mtd_str],
+    ["Vs S&P 500 YTD", vs_sp500_ytd_str],
+]
+
+add_table(
+    ["Metric", "Value"],
+    reb_bench_rows,
+    right_align_cols=[1],
+)
+
+doc.add_page_break()
+
 
 # Holdings by Ticker
-doc.add_heading("Holdings by Ticker", level=1)
+doc.add_heading("Portfolio Composition & Strategy", level=1)
+doc.add_heading("Holdings by Ticker", level=2)
 ticker_rows = []
 for _, row in df.iterrows():
     ticker_rows.append(
@@ -969,7 +1187,8 @@ add_table(
 )
 
 # Asset Class Allocation Overview
-doc.add_heading("Asset Class Allocation Overview", level=1)
+h_ac = doc.add_heading("Asset Class Allocation Overview", level=2)
+h_ac.paragraph_format.space_before = Pt(12)
 
 if asset_targets_df is not None and not asset_targets_df.empty:
     ac_compare = asset_df.merge(
@@ -1031,9 +1250,11 @@ else:
         right_align_cols=[1, 2],
     )
 
+
 # Next Steps & Ongoing Strategy
-doc.add_page_break()
-doc.add_heading("Next Steps & Ongoing Strategy", level=1)
+h_ns = doc.add_heading("Next Steps & Ongoing Strategy", level=2)
+h_ns.paragraph_format.space_before = Pt(12)
+
 add_table(
     ["Focus Area", "Guidance"],
     [
@@ -1052,6 +1273,7 @@ add_table(
         ],
     ],
 )
+
 
 # Visuals – Allocation & Diversification
 doc.add_page_break()
@@ -1109,19 +1331,26 @@ for _, row in bench_df.iterrows():
         ]
     )
 
-doc.add_paragraph("Month-to-date (MTD) comparison:")
+# --- MTD Table ---
+p_mtd = doc.add_paragraph("Month-to-date (MTD) comparison:")
+p_mtd.paragraph_format.space_before = Pt(6)
+
 add_table(
     ["Benchmark", "Portfolio MTD %", "Benchmark MTD %", "Excess MTD %"],
     mtd_rows,
     right_align_cols=[1, 2, 3],
 )
 
-doc.add_paragraph("Year-to-date (YTD) comparison:")
+# --- YTD Table ---
+p_ytd = doc.add_paragraph("Year-to-date (YTD) comparison:")
+p_ytd.paragraph_format.space_before = Pt(12)  # <-- give breathing room
+
 add_table(
     ["Benchmark", "Portfolio YTD %", "Benchmark YTD %", "Excess YTD %"],
     ytd_rows,
     right_align_cols=[1, 2, 3],
 )
+
 
 doc.add_paragraph()
 doc.add_heading("Holdings Multi-Horizon Returns", level=2)
@@ -1149,21 +1378,28 @@ add_table(
     right_align_cols=[1, 2, 3, 4, 5],
 )
 
+# ultra-tight spacer below the returns table (no extra vertical gap)
+sp = doc.add_paragraph()
+sp.paragraph_format.space_before = Pt(0)
+sp.paragraph_format.space_after = Pt(0)
+
 # Dollar Profit/Loss Table
 dollar_pl_sorted = (
     dollar_pl_df.set_index("Ticker").reindex(returns_sorted["Ticker"]).reset_index()
 )
 
-doc.add_paragraph()
-
-p_title = doc.add_heading("Holdings Multi-Horizon Profit/Loss ($)", level=3)
+# Heading for P/L section – minimal spacing so it sits close to returns table
+p_title = doc.add_heading("Holdings Multi-Horizon Profit/Loss ($)", level=2)
+p_title.paragraph_format.space_before = Pt(2)
 p_title.paragraph_format.keep_with_next = True
 
 p_desc = doc.add_paragraph(
     "Approximate dollar profit/loss for each holding over the same lookback windows, "
     "using the same return calculations as the percentage table above."
 )
+p_desc.paragraph_format.space_before = Pt(0)
 p_desc.paragraph_format.keep_with_next = True
+
 
 pl_rows = []
 for _, r in dollar_pl_sorted.iterrows():
