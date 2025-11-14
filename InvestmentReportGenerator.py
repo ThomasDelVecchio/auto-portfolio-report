@@ -968,8 +968,32 @@ summary_total_value = total_value
 summary_target_value = TARGET_PORTFOLIO_VALUE
 summary_num_holdings = len(df)
 
-# Total 1M P/L (sum of per-ticker 1M dollars)
-total_1m_pl = float(dollar_pl_df["1M $"].sum(skipna=True)) if not dollar_pl_df.empty else float("nan")
+# Portfolio-level 1D return (weighted by allocation %)
+summary_1d_return = np.nan
+if not returns_df.empty:
+    try:
+        tmp = returns_df.merge(
+            df[["ticker", "allocation_pct"]],
+            left_on="Ticker",
+            right_on="ticker",
+            how="inner",
+        )
+        vals = tmp["1D %"].to_numpy(dtype=float)
+        wts = tmp["allocation_pct"].to_numpy(dtype=float)
+        mask = ~np.isnan(vals) & ~np.isnan(wts)
+        if mask.any():
+            summary_1d_return = weighted_avg(
+                vals[mask].tolist(),
+                wts[mask].tolist(),
+            )
+    except Exception:
+        summary_1d_return = np.nan
+
+# Total P/L for key horizons
+total_1d_pl = float(dollar_pl_df["1D $"].sum(skipna=True)) if not dollar_pl_df.empty else float("nan")
+total_mtd_pl = dollar_pl_from_return(summary_total_value, port_mtd) if not np.isnan(port_mtd) else float("nan")
+total_ytd_pl = dollar_pl_from_return(summary_total_value, port_ytd) if not np.isnan(port_ytd) else float("nan")
+
 
 # Join returns and $ P/L for ranking
 ret_pl = returns_df.merge(dollar_pl_df, on="Ticker", how="left")
@@ -1191,14 +1215,20 @@ h_ps.paragraph_format.space_before = Pt(6)
 snapshot_rows = []
 snapshot_rows.append(["Total Value", fmt_dollar(summary_total_value)])
 
-
 if summary_target_value is not None:
     snapshot_rows.append(["Target Portfolio Value", fmt_dollar(summary_target_value)])
 
+snapshot_rows.append(["1D Return", fmt_pct(summary_1d_return) if not np.isnan(summary_1d_return) else "-"])
+snapshot_rows.append(["Total 1D P/L", fmt_dollar(total_1d_pl)])
+
 snapshot_rows.append(["MTD Return", fmt_pct(port_mtd) if not np.isnan(port_mtd) else "-"])
+snapshot_rows.append(["Total MTD P/L", fmt_dollar(total_mtd_pl)])
+
 snapshot_rows.append(["YTD Return", fmt_pct(port_ytd) if not np.isnan(port_ytd) else "-"])
-snapshot_rows.append(["Total 1M P/L", fmt_dollar(total_1m_pl)])
+snapshot_rows.append(["Total YTD P/L", fmt_dollar(total_ytd_pl)])
+
 snapshot_rows.append(["Number of Holdings", str(summary_num_holdings)])
+
 
 add_table(
     ["Metric", "Value"],
@@ -1570,11 +1600,34 @@ for _, r in returns_sorted.iterrows():
         ]
     )
 
+# ---- Composite portfolio row (weighted by allocation %) ----
+alloc_map = df.set_index("ticker")["allocation_pct"]
+total_row = ["TOTAL"]
+
+for col in ["1D %", "1W %", "1M %", "3M %", "6M %"]:
+    vals, wts = [], []
+    for _, r in returns_sorted.iterrows():
+        v = r[col]
+        if pd.isna(v):
+            continue
+        t = r["Ticker"]
+        w = float(alloc_map.get(t, np.nan))
+        if np.isnan(w):
+            continue
+        vals.append(v)
+        wts.append(w)
+
+    total_ret = weighted_avg(vals, wts)
+    total_row.append(fmt_pct(total_ret) if not np.isnan(total_ret) else "-")
+
+rows.append(total_row)
+
 add_table(
     ["Ticker", "1D %", "1W %", "1M %", "3M %", "6M %"],
     rows,
     right_align_cols=[1, 2, 3, 4, 5],
 )
+
 
 # ultra-tight spacer below the returns table (no extra vertical gap)
 sp = doc.add_paragraph()
@@ -1611,6 +1664,14 @@ for _, r in dollar_pl_sorted.iterrows():
             fmt_dollar(r["6M $"]),
         ]
     )
+
+# ---- Composite portfolio P/L row (sum of dollars) ----
+total_pl_row = ["TOTAL"]
+for col in ["1D $", "1W $", "1M $", "3M $", "6M $"]:
+    total_val = float(dollar_pl_sorted[col].sum(skipna=True))
+    total_pl_row.append(fmt_dollar(total_val))
+
+pl_rows.append(total_pl_row)
 
 add_table(
     ["Ticker", "1D $", "1W $", "1M $", "3M $", "6M $"],
