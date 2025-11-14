@@ -1,22 +1,25 @@
 # ==============================================================
-# update_portfolio_report_v3.py  (Regenerated)
+# update_portfolio_report_v3.py
 # Live portfolio report with allocation, diversification,
 # and real-time MTD / YTD benchmark comparisons
 # ==============================================================
 
 import os
+import sys
+import subprocess
+import shutil
+from io import BytesIO
+from datetime import datetime
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from io import BytesIO
 import matplotlib.pyplot as plt
-from datetime import datetime
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-from docx2pdf import convert
 
 # -------------------------- Formatting --------------------------
 
@@ -26,20 +29,24 @@ def fmt_pct(x):
         return "-"
     return f"{x:+.2f}%"
 
+
 def fmt_dollar(x):
     import math
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return "-"
     return f"${x:,.2f}"
 
+
 # ----------------------------- CONFIG -----------------------------
 
-# Universal base directory detection:
-# - If PORTFOLIO_INPUT_DIR env var is set, use that
-# - Else if running in Colab and Drive folder exists, use:
-#       /content/drive/MyDrive/Investment Report Inputs
-# - Else default to current directory (GitHub/local)
 def _detect_base_input_dir():
+    """
+    Universal base directory detection:
+      - If PORTFOLIO_INPUT_DIR env var is set, use that
+      - Else if running in Colab and Drive folder exists, use:
+            /content/drive/MyDrive/Investment Report Inputs
+      - Else default to current directory
+    """
     env_dir = os.environ.get("PORTFOLIO_INPUT_DIR")
     if env_dir:
         return env_dir
@@ -59,13 +66,11 @@ def _detect_base_input_dir():
 
     return "."
 
+
 BASE_INPUT_DIR = _detect_base_input_dir()
 
-# Your holdings file (same filenames as before, just joined to base dir)
 HOLDINGS_CSV = os.path.join(BASE_INPUT_DIR, "sample holdings.csv")
-
-# Optional: per-asset-class target file (asset_class,target_pct)
-ASSET_TARGETS_CSV = os.path.join(BASE_INPUT_DIR, "targets_asset.csv")   # if missing, it's fine
+ASSET_TARGETS_CSV = os.path.join(BASE_INPUT_DIR, "targets_asset.csv")  # optional
 
 # How to split an asset-class target across its tickers:
 #   "value" -> proportional to current market value (default)
@@ -75,14 +80,12 @@ TARGET_SPLIT_METHOD = "value"
 RISK_FREE_RATE = 0.04
 monthly_contrib = 250.0
 COLOR_MAIN = ["#2563EB", "#10B981", "#F59E0B", "#6366F1", "#14B8A6"]
+
 # Optional: target total portfolio value (set to a number, or leave as None)
-TARGET_PORTFOLIO_VALUE = 50000.0  # e.g. 250000.0
+TARGET_PORTFOLIO_VALUE = 50000.0
 
-# Optional: extra folders to copy finished reports into.
-# - In Colab, this script will ALSO auto-detect: /content/drive/MyDrive/Investment Report Outputs
-# - On your PC, you can add your local Google Drive folder here if you want.
+# Optional: extra folders to copy finished reports into (for local runs)
 EXTRA_OUTPUT_DIRS = [r"G:\My Drive\Investment Report Outputs"]
-
 
 # Illustrative long-run assumptions for Risk/Return views
 RISK_RETURN = {
@@ -95,8 +98,9 @@ RISK_RETURN = {
     "Innovation/Tech":        {"return": 10.0, "vol": 25.0},
     "Commodities":            {"return": 6.0,  "vol": 10.0},
     "Gold / Precious Metals": {"return": 5.5,  "vol": 12.0},
-    "Digital Assets":         {"return": 11.0, "vol": 70.0}, 
+    "Digital Assets":         {"return": 11.0, "vol": 70.0},
 }
+
 
 # ----------------------- Helpers / Utilities -----------------------
 
@@ -107,6 +111,7 @@ def _norm_col(df: pd.DataFrame, want: str) -> str:
             return c
     raise ValueError(f"Required column '{want}' not found. Present: {list(df.columns)}")
 
+
 def normalize_allocations(series: pd.Series) -> pd.Series:
     if len(series) == 0:
         return series
@@ -115,6 +120,7 @@ def normalize_allocations(series: pd.Series) -> pd.Series:
     rounded.iloc[-1] = round(float(rounded.iloc[-1]) + diff, 2)
     return rounded
 
+
 def get_live_price(ticker: str) -> float:
     data = yf.Ticker(ticker).history(period="1d")
     if data.empty:
@@ -122,6 +128,7 @@ def get_live_price(ticker: str) -> float:
         if data.empty:
             raise ValueError(f"No price data for {ticker}")
     return float(data["Close"].iloc[-1])
+
 
 def get_return_pct(ticker, start_date, end_date):
     try:
@@ -136,6 +143,7 @@ def get_return_pct(ticker, start_date, end_date):
         return (end / start - 1.0) * 100.0
     except Exception:
         return np.nan
+
 
 def get_1d_return_pct(ticker):
     """
@@ -167,11 +175,11 @@ def read_asset_targets(path: str) -> pd.DataFrame | None:
     out = df.rename(columns={ac: "asset_class", tp: "target_pct"}).copy()
     out["asset_class"] = out["asset_class"].astype(str).str.strip()
     out["target_pct"] = pd.to_numeric(out["target_pct"], errors="coerce").fillna(0.0)
-    # Normalize to 100 if not already
     if out["target_pct"].sum() > 0:
         out["target_pct"] = out["target_pct"] / out["target_pct"].sum() * 100.0
         out["target_pct"] = normalize_allocations(out["target_pct"])
     return out
+
 
 def build_ticker_targets(df_holdings: pd.DataFrame,
                          df_asset_targets: pd.DataFrame | None,
@@ -184,6 +192,7 @@ def build_ticker_targets(df_holdings: pd.DataFrame,
     """
     cols_l = [c.lower().strip() for c in df_holdings.columns]
     tickers = df_holdings["ticker"]
+
     # 1) Per-ticker targets in holdings
     if "target_pct" in cols_l:
         tcol = df_holdings.columns[cols_l.index("target_pct")]
@@ -192,6 +201,7 @@ def build_ticker_targets(df_holdings: pd.DataFrame,
             scaled = tgt / tgt.sum() * 100.0
             scaled = normalize_allocations(scaled.reset_index(drop=True))
             return dict(zip(tickers, scaled.tolist()))
+
     # 2) Asset-class targets
     if df_asset_targets is not None and not df_asset_targets.empty:
         merged = df_holdings.merge(
@@ -227,6 +237,7 @@ def build_ticker_targets(df_holdings: pd.DataFrame,
             diff = round(100.0 - sum(vals), 2)
             vals[-1] = round(vals[-1] + diff, 2)
             return dict(zip(keys, vals))
+
     # 3) Equal-weight
     n = len(df_holdings)
     if n == 0:
@@ -234,6 +245,7 @@ def build_ticker_targets(df_holdings: pd.DataFrame,
     eq = [round(100.0 / n, 2)] * n
     eq[-1] = round(eq[-1] + (100.0 - sum(eq)), 2)
     return dict(zip(tickers, eq))
+
 
 # --------------------- 1) LOAD HOLDINGS + PRICES ---------------------
 
@@ -260,6 +272,7 @@ for t in df["ticker"]:
         prices.append(get_live_price(t))
     except Exception:
         prices.append(np.nan)
+
 df["price"] = prices
 df = df.dropna(subset=["price"]).reset_index(drop=True)
 
@@ -271,29 +284,26 @@ df["allocation_pct"] = normalize_allocations(df["allocation_pct"])
 # ------------- 2) ASSET-CLASS SUMMARY (entire portfolio) -------------
 
 asset_df = df.groupby("asset_class", as_index=False)["value"].sum()
-asset_df["allocation_pct"] = np.where(total_value > 0, (asset_df["value"] / total_value * 100.0), 0.0)
+asset_df["allocation_pct"] = np.where(
+    total_value > 0, (asset_df["value"] / total_value * 100.0), 0.0
+)
 asset_df["allocation_pct"] = normalize_allocations(asset_df["allocation_pct"])
 
 # ------------------ TARGETS (user-determined) -------------------
 
-# Read asset-class targets from CSV (if provided)
 asset_targets_df = read_asset_targets(ASSET_TARGETS_CSV)
 
-# Build per-ticker target % (from holdings, asset targets, or equal-weight)
 TICKER_TARGETS_PCT = build_ticker_targets(df.copy(), asset_targets_df, TARGET_SPLIT_METHOD)
 
-# Use your TARGET_PORTFOLIO_VALUE if set, otherwise use your real current total
 core_df = df.copy()
 core_total = TARGET_PORTFOLIO_VALUE if TARGET_PORTFOLIO_VALUE is not None else total_value
 
-# Current allocation is always based on your ACTUAL portfolio value
 core_df["core_allocation_pct"] = np.where(
     total_value > 0,
     (core_df["value"] / total_value * 100.0),
-    0.0
+    0.0,
 )
 
-# Map target % to each ticker
 core_df["target_pct"] = (
     core_df["ticker"]
     .map(TICKER_TARGETS_PCT)
@@ -301,28 +311,24 @@ core_df["target_pct"] = (
     .fillna(0.0)
 )
 
-# Compute target VALUE for each ticker based on desired total portfolio value
 core_df["target_value"] = core_total * (core_df["target_pct"] / 100.0)
 
-# Prevent collisions with existing columns
 for col in ["target_pct", "target_value", "core_allocation_pct"]:
     if col in df.columns:
         df.drop(columns=[col], inplace=True)
 
-# Merge cleanly back into the main df
 df = df.merge(
     core_df[["ticker", "target_value", "target_pct", "core_allocation_pct"]],
     on="ticker",
     how="left",
 )
 
-# Calculate required contribution per ticker
 df["delta_to_target_raw"] = df["target_value"] - df["value"]
 
 df["contribute_to_target"] = np.where(
     df["delta_to_target_raw"].isna(),
     np.nan,
-    np.where(df["delta_to_target_raw"] > 0, df["delta_to_target_raw"], 0.0)
+    np.where(df["delta_to_target_raw"] > 0, df["delta_to_target_raw"], 0.0),
 )
 
 
@@ -355,6 +361,7 @@ geo_alloc = {
 }
 geo_df = pd.DataFrame({"Region": list(geo_alloc.keys()), "Weight": list(geo_alloc.values())})
 
+
 # ---------------------- 4) SECTOR HEATMAP CHART ----------------------
 
 plt.figure(figsize=(6, 5))
@@ -371,6 +378,7 @@ plt.savefig(sector_stream, format="png", bbox_inches="tight", facecolor="white")
 sector_stream.seek(0)
 plt.close()
 
+
 # -------------------- 5) BENCHMARK DATA (MTD & YTD) -------------------
 
 benchmarks = {
@@ -378,6 +386,7 @@ benchmarks = {
     "Global 60/40": "AOR",
     "Conservative 40/60": "AOK",
 }
+
 today = datetime.now()
 start_month = today.replace(day=1) - pd.tseries.offsets.BDay(1)
 start_year = datetime(today.year, 1, 1) - pd.tseries.offsets.BDay(1)
@@ -387,43 +396,57 @@ for name, ticker in benchmarks.items():
     mtd = get_return_pct(ticker, start_month, today)
     ytd = get_return_pct(ticker, start_year, today)
     bench_rows.append(
-        {"Benchmark": name,
-         "MTD %": round(mtd, 2) if not np.isnan(mtd) else np.nan,
-         "YTD %": round(ytd, 2) if not np.isnan(ytd) else np.nan}
+        {
+            "Benchmark": name,
+            "MTD %": round(mtd, 2) if not np.isnan(mtd) else np.nan,
+            "YTD %": round(ytd, 2) if not np.isnan(ytd) else np.nan,
+        }
     )
 
-# Portfolio MTD/YTD as allocation-weighted average of its holdings
 port_changes_mtd, port_changes_ytd, weights = [], [], []
 for _, row in df.iterrows():
-    t = row["ticker"]; w = row["allocation_pct"]
+    t = row["ticker"]
+    w = row["allocation_pct"]
     mtd = get_return_pct(t, start_month, today)
     ytd = get_return_pct(t, start_year, today)
     if np.isnan(mtd) or np.isnan(ytd):
         continue
-    port_changes_mtd.append(mtd); port_changes_ytd.append(ytd); weights.append(w)
+    port_changes_mtd.append(mtd)
+    port_changes_ytd.append(ytd)
+    weights.append(w)
+
 
 def weighted_avg(values, weights):
     if not values:
         return np.nan
-    v = np.array(values, dtype=float); w = np.array(weights, dtype=float)
+    v = np.array(values, dtype=float)
+    w = np.array(weights, dtype=float)
     return float((v * w).sum() / w.sum()) if w.sum() != 0 else np.nan
+
 
 port_mtd = weighted_avg(port_changes_mtd, weights)
 port_ytd = weighted_avg(port_changes_ytd, weights)
-bench_rows.insert(0, {"Benchmark": "Portfolio (Live)",
-                      "MTD %": round(port_mtd, 2) if not np.isnan(port_mtd) else np.nan,
-                      "YTD %": round(port_ytd, 2) if not np.isnan(port_ytd) else np.nan})
+
+bench_rows.insert(
+    0,
+    {
+        "Benchmark": "Portfolio (Live)",
+        "MTD %": round(port_mtd, 2) if not np.isnan(port_mtd) else np.nan,
+        "YTD %": round(port_ytd, 2) if not np.isnan(port_ytd) else np.nan,
+    },
+)
+
 bench_df = pd.DataFrame(bench_rows)
+
 
 # --------- 6) HOLDINGS MULTI-HORIZON RETURNS (1D, 1W, 1M, 3M, 6M) ---------
 
-# NEW: include 1D as 1-day return
 horizons = {
     "1D %": 1,
     "1W %": 7,
     "1M %": 30,
     "3M %": 90,
-    "6M %": 180
+    "6M %": 180,
 }
 
 returns_rows = []
@@ -433,7 +456,6 @@ for _, row in df.iterrows():
 
     for label, days in horizons.items():
         if label == "1D %":
-            # 1-day return = current price vs yesterday close
             price_data = yf.Ticker(t).history(period="2d")
             if len(price_data) >= 2:
                 prev_close = float(price_data["Close"].iloc[-2])
@@ -450,6 +472,7 @@ for _, row in df.iterrows():
 
 returns_df = pd.DataFrame(returns_rows)
 
+
 # ---------- Dollar Profit/Loss for Each Horizon (using same math) ----------
 
 def dollar_pl_from_return(current_value, pct):
@@ -461,11 +484,11 @@ def dollar_pl_from_return(current_value, pct):
     P/L = current_value - start_value
     """
     import math
+
     if pct is None or (isinstance(pct, float) and math.isnan(pct)):
         return np.nan
 
     r = float(pct) / 100.0
-    # Handle ~-100% edge case to avoid division by zero
     if r <= -0.9999:
         return -current_value
 
@@ -477,7 +500,6 @@ def dollar_pl_from_return(current_value, pct):
     return current_value - start_val
 
 
-# Map returns_df by ticker for quick lookup
 returns_by_ticker = returns_df.set_index("Ticker")
 
 dollar_pl_rows = []
@@ -507,8 +529,10 @@ dollar_pl_df = pd.DataFrame(dollar_pl_rows)
 rates = [0.05, 0.07, 0.09]
 years = [1, 5, 10, 15, 20]
 
+
 def future_value(principal, rate, years):
-    return principal * ((1 + rate/12) ** (years * 12))
+    return principal * ((1 + rate / 12) ** (years * 12))
+
 
 def future_value_with_contrib(principal, rate, years, monthly):
     months = years * 12
@@ -516,6 +540,7 @@ def future_value_with_contrib(principal, rate, years, monthly):
     fv_principal = principal * ((1 + monthly_rate) ** months)
     fv_contrib = monthly * (((1 + monthly_rate) ** months - 1) / monthly_rate)
     return fv_principal + fv_contrib
+
 
 proj_rows = []
 for y in years:
@@ -528,16 +553,29 @@ for y in years:
 
 plt.figure(figsize=(6, 4))
 for i, r in enumerate(rates):
-    plt.plot(years, [future_value(total_value, r, y) for y in years], label=f"{int(r*100)}% Lump Sum", linestyle='-')
-    plt.plot(years, [future_value_with_contrib(total_value, r, y, monthly_contrib) for y in years], label=f"{int(r*100)}% + ${int(monthly_contrib)}/mo", linestyle='--')
+    plt.plot(
+        years,
+        [future_value(total_value, r, y) for y in years],
+        label=f"{int(r*100)}% Lump Sum",
+        linestyle="-",
+    )
+    plt.plot(
+        years,
+        [future_value_with_contrib(total_value, r, y, monthly_contrib) for y in years],
+        label=f"{int(r*100)}% + ${int(monthly_contrib)}/mo",
+        linestyle="--",
+    )
 plt.title("Portfolio Growth Projections (20-Year Scenarios)", fontsize=12, weight="bold")
-plt.xlabel("Years"); plt.ylabel("Portfolio Value ($)")
-plt.grid(alpha=0.3); plt.legend(fontsize=8)
+plt.xlabel("Years")
+plt.ylabel("Portfolio Value ($)")
+plt.grid(alpha=0.3)
+plt.legend(fontsize=8)
 plt.tight_layout()
 growth_stream = BytesIO()
 plt.savefig(growth_stream, format="png", bbox_inches="tight", facecolor="white")
 growth_stream.seek(0)
 plt.close()
+
 
 # -------- 8) COMPOUND VALUE BREAKDOWN (CONTRIB VS GROWTH) -------------
 
@@ -545,20 +583,36 @@ years_compound = list(range(0, 21))
 rate_for_compound = 0.07
 contrib_values, growth_values = [], []
 for y in years_compound:
-    total_with_contrib = future_value_with_contrib(total_value, rate_for_compound, y, monthly_contrib)
+    total_with_contrib = future_value_with_contrib(
+        total_value, rate_for_compound, y, monthly_contrib
+    )
     total_contrib = monthly_contrib * 12 * y
     contrib_values.append(total_contrib)
     growth_values.append(max(total_with_contrib - total_contrib, 0))
+
 plt.figure(figsize=(6, 4))
-plt.stackplot(years_compound, contrib_values, growth_values, labels=["Contributions", "Growth"], colors=[COLOR_MAIN[0], COLOR_MAIN[1]], alpha=0.85)
-plt.title("Compound Value Breakdown (Contributions vs Growth — assumes 7% annual return)", fontsize=12, weight="bold")
-plt.xlabel("Years"); plt.ylabel("Portfolio Value ($)")
+plt.stackplot(
+    years_compound,
+    contrib_values,
+    growth_values,
+    labels=["Contributions", "Growth"],
+    colors=[COLOR_MAIN[0], COLOR_MAIN[1]],
+    alpha=0.85,
+)
+plt.title(
+    "Compound Value Breakdown (Contributions vs Growth — assumes 7% annual return)",
+    fontsize=12,
+    weight="bold",
+)
+plt.xlabel("Years")
+plt.ylabel("Portfolio Value ($)")
 plt.legend(loc="upper left", fontsize=8)
 plt.tight_layout()
 compound_stream = BytesIO()
 plt.savefig(compound_stream, format="png", bbox_inches="tight", facecolor="white")
 compound_stream.seek(0)
 plt.close()
+
 
 # -------------- 9) PERFORMANCE VS BENCHMARKS (CHART) ------------------
 
@@ -568,7 +622,14 @@ bench_plot = bench_df.dropna(subset=["MTD %", "YTD %"], how="all").reset_index(d
 
 if bench_plot.empty:
     plt.figure(figsize=(6, 4))
-    plt.text(0.5, 0.5, "Benchmark return data unavailable.\n(Check connection or market days.)", ha="center", va="center", fontsize=9)
+    plt.text(
+        0.5,
+        0.5,
+        "Benchmark return data unavailable.\n(Check connection or market days.)",
+        ha="center",
+        va="center",
+        fontsize=9,
+    )
     plt.axis("off")
     plt.tight_layout()
 else:
@@ -578,32 +639,46 @@ else:
     ytd_vals = bench_plot["YTD %"].to_numpy(dtype=float)
 
     plt.figure(figsize=(6, 4))
-    mtd_bars = plt.bar(x - width/2, mtd_vals, width, label="MTD", color=COLOR_MAIN[0])
-    ytd_bars = plt.bar(x + width/2, ytd_vals, width, label="YTD", color=COLOR_MAIN[1])
+    mtd_bars = plt.bar(x - width / 2, mtd_vals, width, label="MTD", color=COLOR_MAIN[0])
+    ytd_bars = plt.bar(x + width / 2, ytd_vals, width, label="YTD", color=COLOR_MAIN[1])
     plt.xticks(x, bench_plot["Benchmark"], rotation=20, ha="right")
     plt.ylabel("Return (%)")
     plt.title("Portfolio vs Benchmarks (MTD & YTD)", fontsize=12, weight="bold")
     plt.legend(fontsize=8)
     plt.grid(axis="y", alpha=0.3)
 
-    vals = np.concatenate([mtd_vals[~np.isnan(mtd_vals)], ytd_vals[~np.isnan(ytd_vals)]]) if (len(mtd_vals) + len(ytd_vals)) else np.array([])
+    vals = np.concatenate(
+        [mtd_vals[~np.isnan(mtd_vals)], ytd_vals[~np.isnan(ytd_vals)]]
+    ) if (len(mtd_vals) + len(ytd_vals)) else np.array([])
     if vals.size > 0:
         vmin, vmax = float(np.min(vals)), float(np.max(vals))
         if vmin == vmax:
-            vmin -= 1.0; vmax += 1.0
+            vmin -= 1.0
+            vmax += 1.0
         else:
             pad = (vmax - vmin) * 0.2
-            vmin -= pad; vmax += pad
+            vmin -= pad
+            vmax += pad
         plt.ylim(vmin, vmax)
 
     def label_bars(bars, vals):
         for bar, val in zip(bars, vals):
-            if np.isnan(val): continue
+            if np.isnan(val):
+                continue
             height = bar.get_height()
-            plt.text(bar.get_x() + bar.get_width()/2, height, f"{val:+.1f}%", ha="center", va="bottom", fontsize=7)
+            plt.text(
+                bar.get_x() + bar.get_width() / 2,
+                height,
+                f"{val:+.1f}%",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+            )
 
-    label_bars(mtd_bars, mtd_vals); label_bars(ytd_bars, ytd_vals)
+    label_bars(mtd_bars, mtd_vals)
+    label_bars(ytd_bars, ytd_vals)
     plt.tight_layout()
+
 
 # ------------------ 10) RISK & VOLATILITY (CLEANED) ------------------
 
@@ -613,20 +688,27 @@ risk_rows = []
 for ac in present_assets:
     base = RISK_RETURN.get(ac)
     if base is None:
-        if ac.lower().startswith("international"): base = RISK_RETURN.get("International Equity")
-        elif ac.lower().startswith("emerging"):     base = RISK_RETURN.get("Emerging Markets")
-        elif "gold" in ac.lower() or "precious" in ac.lower(): base = RISK_RETURN.get("Gold / Precious Metals")
-        elif "fixed" in ac.lower() or "bond" in ac.lower(): base = RISK_RETURN.get("Fixed Income")
-        elif "real" in ac.lower(): base = RISK_RETURN.get("Real Estate")
-        elif "energy" in ac.lower(): base = RISK_RETURN.get("Energy")
-        elif "innovation" in ac.lower() or "tech" in ac.lower(): base = RISK_RETURN.get("Innovation/Tech")
-        elif "commodit" in ac.lower(): base = RISK_RETURN.get("Commodities")
+        if ac.lower().startswith("international"):
+            base = RISK_RETURN.get("International Equity")
+        elif ac.lower().startswith("emerging"):
+            base = RISK_RETURN.get("Emerging Markets")
+        elif "gold" in ac.lower() or "precious" in ac.lower():
+            base = RISK_RETURN.get("Gold / Precious Metals")
+        elif "fixed" in ac.lower() or "bond" in ac.lower():
+            base = RISK_RETURN.get("Fixed Income")
+        elif "real" in ac.lower():
+            base = RISK_RETURN.get("Real Estate")
+        elif "energy" in ac.lower():
+            base = RISK_RETURN.get("Energy")
+        elif "innovation" in ac.lower() or "tech" in ac.lower():
+            base = RISK_RETURN.get("Innovation/Tech")
+        elif "commodit" in ac.lower():
+            base = RISK_RETURN.get("Commodities")
     if base:
         risk_rows.append({"asset_class": ac, "vol": base["vol"], "ret": base["return"]})
 
 risk_df = pd.DataFrame(risk_rows)
 
-# Volatility bar chart
 plt.figure(figsize=(6, 4))
 plt.bar(risk_df["asset_class"], risk_df["vol"], color=COLOR_MAIN[0])
 plt.title("Expected Volatility by Asset Class", fontsize=12, weight="bold")
@@ -646,16 +728,37 @@ plt.savefig(vol_stream, format="png", bbox_inches="tight", facecolor="white")
 vol_stream.seek(0)
 plt.close()
 
-# Risk vs Return scatter
 plt.figure(figsize=(6, 4))
-plt.scatter(risk_df["vol"], risk_df["ret"], s=80, edgecolors="black", linewidths=0.6, alpha=0.9, color=COLOR_MAIN[1])
+plt.scatter(
+    risk_df["vol"],
+    risk_df["ret"],
+    s=80,
+    edgecolors="black",
+    linewidths=0.6,
+    alpha=0.9,
+    color=COLOR_MAIN[1],
+)
 for _, row in risk_df.iterrows():
-    plt.annotate(row["asset_class"], (row["vol"] + 0.4, row["ret"]), fontsize=8, weight="bold")
+    plt.annotate(
+        row["asset_class"],
+        (row["vol"] + 0.4, row["ret"]),
+        fontsize=8,
+        weight="bold",
+    )
 plt.title("Risk vs Expected Return by Asset Class", fontsize=12, weight="bold")
-plt.xlabel("Volatility (Std Dev %)"); plt.ylabel("Expected Annual Return (%)")
+plt.xlabel("Volatility (Std Dev %)")
+plt.ylabel("Expected Annual Return (%)")
 if len(risk_df):
-    xpad = (risk_df["vol"].max() - risk_df["vol"].min()) * 0.2 if risk_df["vol"].max() != risk_df["vol"].min() else 3
-    ypad = (risk_df["ret"].max() - risk_df["ret"].min()) * 0.2 if risk_df["ret"].max() != risk_df["ret"].min() else 2
+    xpad = (
+        (risk_df["vol"].max() - risk_df["vol"].min()) * 0.2
+        if risk_df["vol"].max() != risk_df["vol"].min()
+        else 3
+    )
+    ypad = (
+        (risk_df["ret"].max() - risk_df["ret"].min()) * 0.2
+        if risk_df["ret"].max() != risk_df["ret"].min()
+        else 2
+    )
     plt.xlim(max(0, risk_df["vol"].min() - xpad), risk_df["vol"].max() + xpad)
     plt.ylim(max(0, risk_df["ret"].min() - ypad), risk_df["ret"].max() + ypad)
 plt.grid(alpha=0.3)
@@ -665,12 +768,17 @@ plt.savefig(risk_stream, format="png", bbox_inches="tight", facecolor="white")
 risk_stream.seek(0)
 plt.close()
 
+
 # ---------------------- 11) ALLOCATION PIE CHARTS ----------------------
 
 plt.figure(figsize=(6, 6))
 plt.pie(
-    df["allocation_pct"], labels=df["ticker"],
-    autopct="%1.2f%%", startangle=90, pctdistance=0.85, labeldistance=1.05
+    df["allocation_pct"],
+    labels=df["ticker"],
+    autopct="%1.2f%%",
+    startangle=90,
+    pctdistance=0.85,
+    labeldistance=1.05,
 )
 plt.title("Portfolio Allocation by Ticker", fontsize=12, weight="bold")
 plt.tight_layout()
@@ -681,8 +789,12 @@ plt.close()
 
 plt.figure(figsize=(6, 6))
 plt.pie(
-    asset_df["allocation_pct"], labels=asset_df["asset_class"],
-    autopct="%1.2f%%", startangle=90, pctdistance=0.85, labeldistance=1.05
+    asset_df["allocation_pct"],
+    labels=asset_df["asset_class"],
+    autopct="%1.2f%%",
+    startangle=90,
+    pctdistance=0.85,
+    labeldistance=1.05,
 )
 plt.title("Asset Class Allocation", fontsize=12, weight="bold")
 plt.tight_layout()
@@ -690,6 +802,7 @@ asset_pie_stream = BytesIO()
 plt.savefig(asset_pie_stream, format="png", bbox_inches="tight", facecolor="white")
 asset_pie_stream.seek(0)
 plt.close()
+
 
 # ------------------------- 12) BUILD WORD DOC --------------------------
 
@@ -699,11 +812,11 @@ style.font.name = "Calibri"
 style._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
 style.font.size = Pt(11)
 
+
 def add_table(headers, rows, right_align_cols=None):
     table = doc.add_table(rows=1, cols=len(headers))
     table.style = "Light Grid Accent 1"
 
-    # ----- header row -----
     hdr_cells = table.rows[0].cells
     for i, h in enumerate(headers):
         hdr_cells[i].text = h
@@ -711,37 +824,34 @@ def add_table(headers, rows, right_align_cols=None):
             for r in p.runs:
                 r.bold = True
 
-    # ----- data rows -----
     for row_data in rows:
         row_cells = table.add_row().cells
         for i, val in enumerate(row_data):
             row_cells[i].text = str(val)
 
-    # ----- repeat header row on each page -----
+    # Repeat header row on each page
     hdr_row = table.rows[0]
     tr = hdr_row._tr
     trPr = tr.get_or_add_trPr()
     tbl_header = OxmlElement("w:tblHeader")
     trPr.append(tbl_header)
 
-    # ----- prevent splitting rows; keep rows together -----
+    # Prevent splitting rows; keep rows together
     row_count = len(table.rows)
     for idx, row in enumerate(table.rows):
         tr = row._tr
         trPr = tr.get_or_add_trPr()
 
-        # don't allow a single row to be split across pages
         cant_split = OxmlElement("w:cantSplit")
         trPr.append(cant_split)
 
-        # keep each row with the next row (except the last one)
         for cell in row.cells:
             for p in cell.paragraphs:
                 pf = p.paragraph_format
                 pf.keep_together = True
                 pf.keep_with_next = (idx < row_count - 1)
 
-    # ----- right–align numeric columns -----
+    # Right-align numeric columns
     if right_align_cols is not None:
         for row in table.rows[1:]:
             for col_idx in right_align_cols:
@@ -761,26 +871,26 @@ cover.runs[0].bold = True
 cover.runs[0].font.size = Pt(26)
 cover.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-subtitle = doc.add_paragraph("Automated Summary, Diversification, and Performance vs Benchmarks")
+subtitle = doc.add_paragraph(
+    "Automated Summary, Diversification, and Performance vs Benchmarks"
+)
 subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
 subtitle.runs[0].font.size = Pt(14)
 subtitle.runs[0].font.color.rgb = RGBColor(70, 130, 180)
 
-# >>> ADD TIMESTAMP ON COVER <<<
 timestamp_str = datetime.now().strftime("%A, %B %d, %Y — %I:%M %p")
 ts = doc.add_paragraph(f"Report Run: {timestamp_str}")
 ts.alignment = WD_ALIGN_PARAGRAPH.CENTER
 ts.runs[0].font.size = Pt(12)
 ts.runs[0].font.color.rgb = RGBColor(110, 110, 110)
 
-doc.add_paragraph()  # empty spacer
+doc.add_paragraph()
 
 prepared = doc.add_paragraph("Prepared for: Tom Short")
 prepared.alignment = WD_ALIGN_PARAGRAPH.CENTER
 prepared.runs[0].font.size = Pt(13)
 
 doc.add_page_break()
-
 
 # Executive Summary
 doc.add_heading("Executive Summary", level=1)
@@ -797,65 +907,77 @@ overall_rows = [
     ["Current Portfolio Value", f"{total_value:,.2f}", "Sum of all holdings at live prices"],
 ]
 
-# Add target portfolio value if user entered one
 if TARGET_PORTFOLIO_VALUE is not None:
     overall_rows.append(
-        ["Target Portfolio Value", f"{TARGET_PORTFOLIO_VALUE:,.2f}", "Used for contribution-to-target calculations"]
+        [
+            "Target Portfolio Value",
+            f"{TARGET_PORTFOLIO_VALUE:,.2f}",
+            "Used for contribution-to-target calculations",
+        ]
     )
 
 add_table(["Category", "Amount ($)", "Notes"], overall_rows, right_align_cols=[1])
-
 
 # Holdings by Ticker
 doc.add_heading("Holdings by Ticker", level=1)
 ticker_rows = []
 for _, row in df.iterrows():
-    ticker_rows.append([
-        row["ticker"],
-        row["asset_class"],
-        f"{row['shares']:.4f}",
-        f"{row['price']:.2f}",
-        f"{row['value']:.2f}",
-        f"{row['core_allocation_pct']:.2f}%",
-        f"{(row.get('target_pct') or 0.0):.2f}%",
-        "-" if pd.isna(row.get("contribute_to_target")) else fmt_dollar(row["contribute_to_target"]),
-    ])
-# ----- ADD TOTAL ROW -----
+    ticker_rows.append(
+        [
+            row["ticker"],
+            row["asset_class"],
+            f"{row['shares']:.4f}",
+            f"{row['price']:.2f}",
+            f"{row['value']:.2f}",
+            f"{row['core_allocation_pct']:.2f}%",
+            f"{(row.get('target_pct') or 0.0):.2f}%",
+            "-"
+            if pd.isna(row.get("contribute_to_target"))
+            else fmt_dollar(row["contribute_to_target"]),
+        ]
+    )
+
 total_value_sum = df["value"].sum()
 total_contrib_sum = df["contribute_to_target"].fillna(0).sum()
 
-ticker_rows.append([
-    "TOTAL",
-    "",
-    "",
-    "",
-    f"{total_value_sum:,.2f}",
-    "",
-    "",
-    fmt_dollar(total_contrib_sum)
-])
-
-add_table(
-    ["Ticker", "Asset Class", "Shares", "Price ($)", "Value ($)", "Allocation %", "Target %", "Contribute to Target ($)"],
-    ticker_rows,
-    right_align_cols=[2, 3, 4, 5, 6, 7]
+ticker_rows.append(
+    [
+        "TOTAL",
+        "",
+        "",
+        "",
+        f"{total_value_sum:,.2f}",
+        "",
+        "",
+        fmt_dollar(total_contrib_sum),
+    ]
 )
 
+add_table(
+    [
+        "Ticker",
+        "Asset Class",
+        "Shares",
+        "Price ($)",
+        "Value ($)",
+        "Allocation %",
+        "Target %",
+        "Contribute to Target ($)",
+    ],
+    ticker_rows,
+    right_align_cols=[2, 3, 4, 5, 6, 7],
+)
 
-# --------------------------------------------------------------------
-# Asset Class Allocation Overview — with Target % (if available)
-# --------------------------------------------------------------------
+# Asset Class Allocation Overview
 doc.add_heading("Asset Class Allocation Overview", level=1)
 
 if asset_targets_df is not None and not asset_targets_df.empty:
-    # Merge actual vs target asset allocations
     ac_compare = asset_df.merge(
         asset_targets_df, on="asset_class", how="left", suffixes=("", "_target")
     )
     ac_compare["target_pct"] = ac_compare["target_pct"].fillna(0.0)
     ac_compare["delta_pct"] = ac_compare["allocation_pct"] - ac_compare["target_pct"]
 
-    # Optional: sort by largest absolute delta first (comment out if not desired)
     ac_compare = ac_compare.reindex(
         ac_compare["delta_pct"].abs().sort_values(ascending=False).index
     )
@@ -863,47 +985,51 @@ if asset_targets_df is not None and not asset_targets_df.empty:
     ac_rows = []
     for _, row in ac_compare.iterrows():
         delta_str = fmt_pct(row["delta_pct"])
-        ac_rows.append([
-            row["asset_class"],
-            f"{row['value']:.2f}",
-            f"{row['allocation_pct']:.2f}%",
-            f"{row['target_pct']:.2f}%",
-            delta_str,
-        ])
+        ac_rows.append(
+            [
+                row["asset_class"],
+                f"{row['value']:.2f}",
+                f"{row['allocation_pct']:.2f}%",
+                f"{row['target_pct']:.2f}%",
+                delta_str,
+            ]
+        )
 
-    # ----- ADD TOTAL ROW FOR ASSET CLASS TABLE -----
     total_ac_value = asset_df["value"].sum()
 
-    ac_rows.append([
-        "TOTAL",
-        f"{total_ac_value:,.2f}",
-        "100.00%",
-        f"{asset_targets_df['target_pct'].sum():.2f}%" if (asset_targets_df is not None and not asset_targets_df.empty) else "",
-        ""
-    ])
+    ac_rows.append(
+        [
+            "TOTAL",
+            f"{total_ac_value:,.2f}",
+            "100.00%",
+            f"{asset_targets_df['target_pct'].sum():.2f}%"
+            if (asset_targets_df is not None and not asset_targets_df.empty)
+            else "",
+            "",
+        ]
+    )
 
     add_table(
         ["Asset Class", "Value ($)", "Actual %", "Target %", "Delta %"],
         ac_rows,
-        right_align_cols=[1, 2, 3, 4]
+        right_align_cols=[1, 2, 3, 4],
     )
 
 else:
-    # Fallback: just show actual allocations
     ac_rows = []
     for _, row in asset_df.iterrows():
-        ac_rows.append([
-            row["asset_class"],
-            f"{row['value']:.2f}",
-            f"{row['allocation_pct']:.2f}%",
-        ])
+        ac_rows.append(
+            [
+                row["asset_class"],
+                f"{row['value']:.2f}",
+                f"{row['allocation_pct']:.2f}%",
+            ]
+        )
     add_table(
         ["Asset Class", "Value ($)", "Allocation %"],
         ac_rows,
-        right_align_cols=[1, 2]
+        right_align_cols=[1, 2],
     )
-
-
 
 # Next Steps & Ongoing Strategy
 doc.add_page_break()
@@ -912,31 +1038,42 @@ add_table(
     ["Focus Area", "Guidance"],
     [
         ["Rebalancing", "Review annually; adjust if allocations drift ±5%."],
-        ["Contributions", f"Automate around ${monthly_contrib:,.0f}/mo into your target allocation."],
-        ["Risk Management", "Stay within your risk tolerance; increase bonds as you approach major goals."],
-        ["Monitoring", "Avoid overreacting to short-term volatility; review quarterly or annually."],
+        [
+            "Contributions",
+            f"Automate around ${monthly_contrib:,.0f}/mo into your target allocation.",
+        ],
+        [
+            "Risk Management",
+            "Stay within your risk tolerance; increase bonds as you approach major goals.",
+        ],
+        [
+            "Monitoring",
+            "Avoid overreacting to short-term volatility; review quarterly or annually.",
+        ],
     ],
 )
-
 
 # Visuals – Allocation & Diversification
 doc.add_page_break()
 doc.add_heading("Visual Report – Allocation & Diversification", level=1)
+
 doc.add_heading("Ticker-Level Allocation Breakdown", level=2)
 doc.add_picture(ticker_pie_stream, width=Inches(5.5))
 p = doc.add_paragraph("Figure 1: Allocation by ticker.")
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-doc.add_paragraph("\n")
+doc.add_paragraph()
 doc.add_heading("Asset Class Allocation Breakdown", level=2)
 doc.add_picture(asset_pie_stream, width=Inches(5.5))
 p = doc.add_paragraph("Figure 2: Allocation by asset class.")
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-doc.add_paragraph("\n")
+doc.add_paragraph()
 doc.add_heading("Sector Allocation Heatmap", level=2)
 doc.add_picture(sector_stream, width=Inches(5.5))
-p = doc.add_paragraph("Figure 3: Approximate sector exposure based on underlying holdings.")
+p = doc.add_paragraph(
+    "Figure 3: Approximate sector exposure based on underlying holdings."
+)
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 # Performance & Growth
@@ -955,48 +1092,70 @@ mtd_rows, ytd_rows = [], []
 for _, row in bench_df.iterrows():
     if row["Benchmark"] == "Portfolio (Live)":
         continue
-    mtd_rows.append([row["Benchmark"], fmt_pct(port_row.get("MTD %")), fmt_pct(row["MTD %"]), fmt_pct((port_row.get("MTD %") or np.nan) - (row["MTD %"] or np.nan))])
-    ytd_rows.append([row["Benchmark"], fmt_pct(port_row.get("YTD %")), fmt_pct(row["YTD %"]), fmt_pct((port_row.get("YTD %") or np.nan) - (row["YTD %"] or np.nan))])
+    mtd_rows.append(
+        [
+            row["Benchmark"],
+            fmt_pct(port_row.get("MTD %")),
+            fmt_pct(row["MTD %"]),
+            fmt_pct((port_row.get("MTD %") or np.nan) - (row["MTD %"] or np.nan)),
+        ]
+    )
+    ytd_rows.append(
+        [
+            row["Benchmark"],
+            fmt_pct(port_row.get("YTD %")),
+            fmt_pct(row["YTD %"]),
+            fmt_pct((port_row.get("YTD %") or np.nan) - (row["YTD %"] or np.nan)),
+        ]
+    )
 
 doc.add_paragraph("Month-to-date (MTD) comparison:")
-add_table(["Benchmark", "Portfolio MTD %", "Benchmark MTD %", "Excess MTD %"], mtd_rows, right_align_cols=[1, 2, 3])
+add_table(
+    ["Benchmark", "Portfolio MTD %", "Benchmark MTD %", "Excess MTD %"],
+    mtd_rows,
+    right_align_cols=[1, 2, 3],
+)
 
 doc.add_paragraph("Year-to-date (YTD) comparison:")
-add_table(["Benchmark", "Portfolio YTD %", "Benchmark YTD %", "Excess YTD %"], ytd_rows, right_align_cols=[1, 2, 3])
+add_table(
+    ["Benchmark", "Portfolio YTD %", "Benchmark YTD %", "Excess YTD %"],
+    ytd_rows,
+    right_align_cols=[1, 2, 3],
+)
 
-doc.add_paragraph("\n")
+doc.add_paragraph()
 doc.add_heading("Holdings Multi-Horizon Returns", level=2)
-doc.add_paragraph("Performance of each holding over multiple lookback periods, ranked by 6-month return:")
+doc.add_paragraph(
+    "Performance of each holding over multiple lookback periods, ranked by 6-month return:"
+)
+
 returns_sorted = returns_df.sort_values("6M %", ascending=False, na_position="last")
 rows = []
 for _, r in returns_sorted.iterrows():
-    rows.append([
-        r["Ticker"],
-        fmt_pct(r["1D %"]),
-        fmt_pct(r["1W %"]),
-        fmt_pct(r["1M %"]),
-        fmt_pct(r["3M %"]),
-        fmt_pct(r["6M %"]),
-    ])
+    rows.append(
+        [
+            r["Ticker"],
+            fmt_pct(r["1D %"]),
+            fmt_pct(r["1W %"]),
+            fmt_pct(r["1M %"]),
+            fmt_pct(r["3M %"]),
+            fmt_pct(r["6M %"]),
+        ]
+    )
+
 add_table(
     ["Ticker", "1D %", "1W %", "1M %", "3M %", "6M %"],
     rows,
-    right_align_cols=[1, 2, 3, 4, 5]
+    right_align_cols=[1, 2, 3, 4, 5],
 )
 
-# ----------------- Dollar Profit/Loss Table Under Returns -----------------
-
-# Reorder dollar_pl_df to match the same ticker order (sorted by 6M %)
+# Dollar Profit/Loss Table
 dollar_pl_sorted = (
-    dollar_pl_df
-    .set_index("Ticker")
-    .reindex(returns_sorted["Ticker"])
-    .reset_index()
+    dollar_pl_df.set_index("Ticker").reindex(returns_sorted["Ticker"]).reset_index()
 )
 
-doc.add_paragraph("\n")
+doc.add_paragraph()
 
-# Heading + description should stay with the table (no page break between)
 p_title = doc.add_heading("Holdings Multi-Horizon Profit/Loss ($)", level=3)
 p_title.paragraph_format.keep_with_next = True
 
@@ -1006,32 +1165,34 @@ p_desc = doc.add_paragraph(
 )
 p_desc.paragraph_format.keep_with_next = True
 
-
 pl_rows = []
 for _, r in dollar_pl_sorted.iterrows():
-    pl_rows.append([
-        r["Ticker"],
-        fmt_dollar(r["1D $"]),
-        fmt_dollar(r["1W $"]),
-        fmt_dollar(r["1M $"]),
-        fmt_dollar(r["3M $"]),
-        fmt_dollar(r["6M $"]),
-    ])
+    pl_rows.append(
+        [
+            r["Ticker"],
+            fmt_dollar(r["1D $"]),
+            fmt_dollar(r["1W $"]),
+            fmt_dollar(r["1M $"]),
+            fmt_dollar(r["3M $"]),
+            fmt_dollar(r["6M $"]),
+        ]
+    )
 
 add_table(
     ["Ticker", "1D $", "1W $", "1M $", "3M $", "6M $"],
     pl_rows,
-    right_align_cols=[1, 2, 3, 4, 5]
+    right_align_cols=[1, 2, 3, 4, 5],
 )
 
-
-doc.add_paragraph("\n")
+doc.add_paragraph()
 doc.add_heading("Compound Value Breakdown", level=2)
 doc.add_picture(compound_stream, width=Inches(6))
-p = doc.add_paragraph("Figure 4: Based on a 7% annual return. Shows how much comes from your contributions vs market growth.")
+p = doc.add_paragraph(
+    "Figure 4: Based on a 7% annual return. Shows how much comes from your contributions vs market growth."
+)
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-doc.add_paragraph("\n")
+doc.add_paragraph()
 doc.add_heading("20-Year Projection Scenarios", level=2)
 contrib_label = f"+${int(monthly_contrib):,}/mo"
 proj_headers = [
@@ -1044,7 +1205,6 @@ proj_headers = [
     f"9% ({contrib_label})",
 ]
 
-# Convert proj_rows into simple list-of-lists for add_table
 proj_rows_for_table = []
 for row in proj_rows:
     formatted_row = [str(row[0])]
@@ -1055,27 +1215,35 @@ for row in proj_rows:
 add_table(
     proj_headers,
     proj_rows_for_table,
-    right_align_cols=list(range(1, len(proj_headers)))
+    right_align_cols=list(range(1, len(proj_headers))),
 )
 
-doc.add_paragraph("\n")
+doc.add_paragraph()
 doc.add_picture(growth_stream, width=Inches(6))
-p = doc.add_paragraph("Figure 5: Long-term projections under different return and contribution assumptions.")
+p = doc.add_paragraph(
+    "Figure 5: Long-term projections under different return and contribution assumptions."
+)
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 # Risk & Volatility
 doc.add_page_break()
 doc.add_heading("Risk & Volatility Analysis", level=1)
+
 doc.add_heading("Expected Volatility by Asset Class", level=2)
 doc.add_picture(vol_stream, width=Inches(5.5))
-p = doc.add_paragraph("Figure 6: Approximate volatility (standard deviation) by asset class.")
+p = doc.add_paragraph(
+    "Figure 6: Approximate volatility (standard deviation) by asset class."
+)
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-doc.add_paragraph("\n")
+doc.add_paragraph()
 doc.add_heading("Risk vs Expected Return", level=2)
 doc.add_picture(risk_stream, width=Inches(5.5))
-p = doc.add_paragraph("Figure 7: Trade-off between expected return and volatility by asset class.")
+p = doc.add_paragraph(
+    "Figure 7: Trade-off between expected return and volatility by asset class."
+)
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
 
 # ------------------------- 13) SAVE DOCX + PDF ------------------------
 
@@ -1083,32 +1251,21 @@ today_str = datetime.now().strftime("%Y-%m-%d")
 docx_name = f"Investment_Report_{today_str}.docx"
 pdf_name = f"Investment_Report_{today_str}.pdf"
 
-# Always save the DOCX
 doc.save(docx_name)
 print(f"Report generated: {docx_name}")
 
-# ----------------------------------------------------------------
-# Clean up any stale PDF and "stale Word cache" issues
-# ----------------------------------------------------------------
 if os.path.exists(pdf_name):
     os.remove(pdf_name)
 
-# Touch DOCX so any external tooling (Word, LibreOffice) sees it as fresh
 if os.path.exists(docx_name):
     os.utime(docx_name, None)
 
 pdf_created = False
 
-import sys
-import subprocess
-import shutil
-
-# ------------------ Platform-specific PDF export ------------------
-
-# Windows or macOS → use docx2pdf (Word automation)
+# Only generate PDF on Windows / macOS; skip on Linux (Colab)
 if sys.platform.startswith("win") or sys.platform == "darwin":
     try:
-        from docx2pdf import convert
+        from docx2pdf import convert  # lazy import so Colab / Linux don't care
         print("Attempting PDF export via docx2pdf (Word)...")
         convert(docx_name, pdf_name)
         if os.path.exists(pdf_name):
@@ -1119,59 +1276,24 @@ if sys.platform.startswith("win") or sys.platform == "darwin":
     except Exception as e:
         print(f"❌ PDF export failed via docx2pdf: {e}")
         print("Make sure Microsoft Word is installed and docx2pdf is configured.")
+else:
+    print("Skipping PDF generation on this platform (DOCX only).")
 
-# Linux (Google Colab, most servers) → use LibreOffice CLI
-elif sys.platform.startswith("linux"):
-    try:
-        # Prefer 'libreoffice', fall back to 'soffice' if needed
-        lo_cmd = None
-        if shutil.which("libreoffice"):
-            lo_cmd = "libreoffice"
-        elif shutil.which("soffice"):
-            lo_cmd = "soffice"
-
-        if lo_cmd is None:
-            raise RuntimeError(
-                "LibreOffice is not installed (no 'libreoffice' or 'soffice' found on PATH)."
-            )
-
-        print(f"Attempting PDF export via {lo_cmd} (headless)...")
-        subprocess.run(
-            [lo_cmd, "--headless", "--convert-to", "pdf", docx_name, "--outdir", "."],
-            check=True
-        )
-
-        if os.path.exists(pdf_name):
-            pdf_created = True
-            print(f"✔ PDF created via {lo_cmd}: {pdf_name}")
-        else:
-            print("⚠ LibreOffice ran, but PDF file not found.")
-    except Exception as e:
-        print(f"❌ PDF export failed on Linux: {e}")
-        print("Install LibreOffice for automatic DOCX → PDF export on Linux.")
-
-# Fallback summary
 if not pdf_created:
     print("⚠ No PDF generated. You still have the DOCX file.")
 
-# ---- Extra: copy outputs into Drive / other folders ----
+# Copy outputs into Drive / other folders
 try:
-    import shutil  # already imported above but safe
-
-    # Start with any user-configured extra dirs (for local runs)
     dest_dirs = list(EXTRA_OUTPUT_DIRS) if "EXTRA_OUTPUT_DIRS" in globals() else []
 
-    # If running in Colab with Google Drive mounted, also use your Drive folder
     colab_drive_outputs = "/content/drive/MyDrive/Investment Report Outputs"
     if os.path.isdir(colab_drive_outputs) and colab_drive_outputs not in dest_dirs:
         dest_dirs.append(colab_drive_outputs)
 
-    # Collect all generated files (DOCX, and PDF if created)
     files_to_copy = [docx_name]
     if pdf_created and os.path.exists(pdf_name):
         files_to_copy.append(pdf_name)
 
-    # Copy each file into each destination folder
     for out_dir in dest_dirs:
         if not os.path.isdir(out_dir):
             continue
