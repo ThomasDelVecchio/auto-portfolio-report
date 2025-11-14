@@ -20,6 +20,33 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
+# -------------------------- Timezone Helper --------------------------
+
+try:
+    # Python 3.9+ standard library
+    from zoneinfo import ZoneInfo
+
+    def get_eastern_now():
+        """Return current time in America/New_York (Eastern Time)."""
+        return datetime.now(ZoneInfo("America/New_York"))
+
+except Exception:
+    # Fallback if zoneinfo isn't available; use pytz if present
+    try:
+        import pytz
+        ET = pytz.timezone("US/Eastern")
+
+        def get_eastern_now():
+            """Return current time in US/Eastern using pytz."""
+            return datetime.now(ET)
+
+    except Exception:
+        # Last-resort fallback: system local time
+        def get_eastern_now():
+            """Fallback to system local time if timezone libraries not available."""
+            return datetime.now()
+
+
 # -------------------------- Formatting --------------------------
 
 def fmt_pct(x):
@@ -331,35 +358,105 @@ df["contribute_to_target"] = np.where(
 )
 
 
-# -------- 3) SECTOR & GEOGRAPHIC (simple illustrative weights) --------
+# ==============================================================
+# 3) REAL ETF-BASED SECTOR WEIGHTS (ETF map + Yahoo for singles)
+# ==============================================================
 
-sector_weights = {
-    "Tech": 32,
-    "Financials": 12,
-    "Health Care": 11,
-    "Industrials": 9,
-    "Cons. Disc.": 10,
-    "Comm. Services": 8,
-    "Energy": 4,
-    "Materials": 3,
-    "Real Estate": 3,
-    "Utilities": 3,
-    "Digital Assets": 3,
-    "Precious Metals": 2,
+ETF_SECTOR_MAP = {
+    "VOO": {
+        "Tech": 29.0,
+        "Financials": 13.0,
+        "Health Care": 13.0,
+        "Industrials": 8.0,
+        "Consumer Disc.": 10.0,
+        "Comm Services": 9.0,
+        "Energy": 4.0,
+        "Materials": 2.5,
+        "Real Estate": 2.5,
+        "Utilities": 2.5,
+    },
+    "QQQ": {
+        "Tech": 55.0,
+        "Consumer Disc.": 17.0,
+        "Comm Services": 15.0,
+        "Health Care": 7.0,
+        "Industrials": 3.0,
+        "Other": 3.0,
+    },
+    "VXUS": {
+        "Financials": 20.0,
+        "Industrials": 15.0,
+        "Consumer Disc.": 12.0,
+        "Tech": 11.0,
+        "Health Care": 9.0,
+        "Materials": 8.0,
+        "Energy": 6.0,
+        "Real Estate": 6.0,
+        "Utilities": 4.0,
+        "Comm Services": 4.0,
+    },
+    "BND": {"Fixed Income": 100.0},
+    "GLD": {"Precious Metals": 100.0},
+    "FBTC": {"Digital Assets": 100.0},
 }
 
+# Normalize Yahoo sector names to match ETF naming convention
+SECTOR_NAME_NORMALIZE = {
+    "Technology": "Tech",
+    "Information Technology": "Tech",
+    "Financial Services": "Financials",
+    "Consumer Cyclical": "Consumer Disc.",
+    "Communication Services": "Comm Services",
+}
+
+def normalize_sector_name(name: str) -> str:
+    if not isinstance(name, str):
+        return "Other"
+    base = name.strip()
+    return SECTOR_NAME_NORMALIZE.get(base, base)
+
+
+portfolio_sectors = {}
+sector_cache = {}
+
+for _, row in df.iterrows():
+    t = row["ticker"]
+    w = float(row["allocation_pct"])
+
+    # 1) ETF tickers → use static breakdown
+    if t in ETF_SECTOR_MAP:
+        for sector, pct in ETF_SECTOR_MAP[t].items():
+            portfolio_sectors[sector] = portfolio_sectors.get(sector, 0.0) + (w * pct / 100.0)
+        continue
+
+    # 2) Single stocks → use Yahoo Finance
+    if t in sector_cache:
+        sector = sector_cache[t]
+    else:
+        try:
+            info = yf.Ticker(t).info
+            raw_sector = info.get("sector")
+        except Exception:
+            raw_sector = None
+
+        sector = normalize_sector_name(raw_sector) if raw_sector else "Other"
+        sector_cache[t] = sector
+
+    portfolio_sectors[sector] = portfolio_sectors.get(sector, 0.0) + w
+
+# Build DataFrame and normalize
 sector_df_static = pd.DataFrame(
-    {"Sector": list(sector_weights.keys()), "Weight": list(sector_weights.values())}
+    list(portfolio_sectors.items()),
+    columns=["Sector", "Weight"]
 )
 
-geo_alloc = {
-    "United States": 70,
-    "International Developed": 20,
-    "Emerging Markets": 5,
-    "Global Bonds": 3,
-    "Precious Metals": 2,
-}
-geo_df = pd.DataFrame({"Region": list(geo_alloc.keys()), "Weight": list(geo_alloc.values())})
+total = sector_df_static["Weight"].sum()
+if total > 0:
+    sector_df_static["Weight"] = (sector_df_static["Weight"] / total * 100.0).round(2)
+
+sector_df_static = sector_df_static.sort_values("Weight", ascending=False).reset_index(drop=True)
+
+
 
 
 # ---------------------- 4) SECTOR HEATMAP CHART ----------------------
@@ -387,9 +484,14 @@ benchmarks = {
     "Conservative 40/60": "AOK",
 }
 
-today = datetime.now()
-start_month = today.replace(day=1) - pd.tseries.offsets.BDay(1)
-start_year = datetime(today.year, 1, 1) - pd.tseries.offsets.BDay(1)
+today = get_eastern_now()
+
+# Last business day of the prior month
+start_month = (today.replace(day=1) - pd.offsets.BMonthEnd(1))
+
+# Last business day before Jan 1
+start_year = (datetime(today.year, 1, 1) - pd.offsets.BMonthEnd(1))
+
 
 bench_rows = []
 for name, ticker in benchmarks.items():
@@ -421,7 +523,14 @@ def weighted_avg(values, weights):
         return np.nan
     v = np.array(values, dtype=float)
     w = np.array(weights, dtype=float)
-    return float((v * w).sum() / w.sum()) if w.sum() != 0 else np.nan
+
+    s = w.sum()
+    if s == 0:
+        return np.nan
+
+    w = w / s  # normalize
+    return float((v * w).sum())
+
 
 
 port_mtd = weighted_avg(port_changes_mtd, weights)
@@ -692,28 +801,45 @@ present_assets = sorted(set(asset_df["asset_class"]))
 
 risk_rows = []
 for ac in present_assets:
-    base = RISK_RETURN.get(ac)
+    ac_norm = ac.strip().lower()
+
+    # normalize plurals (Equities → Equity)
+    ac_norm = ac_norm.replace("equities", "equity")
+
+    # Try direct exact matches first (case-insensitive)
+    base = None
+    for k, v in RISK_RETURN.items():
+        key_norm = k.lower().replace("equities", "equity")
+        if ac_norm.startswith(key_norm):
+            base = v
+            break
+
+    # Fallback pattern matching
     if base is None:
-        if ac.lower().startswith("international"):
+        if "international" in ac_norm:
             base = RISK_RETURN.get("International Equity")
-        elif ac.lower().startswith("emerging"):
+        elif "emerging" in ac_norm:
             base = RISK_RETURN.get("Emerging Markets")
-        elif "gold" in ac.lower() or "precious" in ac.lower():
+        elif "gold" in ac_norm or "precious" in ac_norm:
             base = RISK_RETURN.get("Gold / Precious Metals")
-        elif "fixed" in ac.lower() or "bond" in ac.lower():
+        elif "fixed" in ac_norm or "bond" in ac_norm:
             base = RISK_RETURN.get("Fixed Income")
-        elif "real" in ac.lower():
+        elif "real" in ac_norm:
             base = RISK_RETURN.get("Real Estate")
-        elif "energy" in ac.lower():
+        elif "energy" in ac_norm:
             base = RISK_RETURN.get("Energy")
-        elif "innovation" in ac.lower() or "tech" in ac.lower():
+        elif "tech" in ac_norm or "innovation" in ac_norm:
             base = RISK_RETURN.get("Innovation/Tech")
-        elif "commodit" in ac.lower():
+        elif "commodit" in ac_norm:
             base = RISK_RETURN.get("Commodities")
+
+    # Only append if we successfully matched something
     if base:
         risk_rows.append({"asset_class": ac, "vol": base["vol"], "ret": base["return"]})
 
+# Output DataFrame
 risk_df = pd.DataFrame(risk_rows)
+
 
 plt.figure(figsize=(6, 4))
 plt.bar(risk_df["asset_class"], risk_df["vol"], color=COLOR_MAIN[0])
@@ -1035,7 +1161,7 @@ subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
 subtitle.runs[0].font.size = Pt(14)
 subtitle.runs[0].font.color.rgb = RGBColor(70, 130, 180)
 
-timestamp_str = datetime.now().strftime("%A, %B %d, %Y — %I:%M %p")
+timestamp_str = get_eastern_now().strftime("%A, %B %d, %Y — %I:%M %p ET")
 ts = doc.add_paragraph(f"Report Run: {timestamp_str}")
 ts.alignment = WD_ALIGN_PARAGRAPH.CENTER
 ts.runs[0].font.size = Pt(12)
@@ -1570,7 +1696,7 @@ p.paragraph_format.space_after = Pt(0)
 
 # ------------------------- 13) SAVE DOCX + PDF ------------------------
 
-today_str = datetime.now().strftime("%Y-%m-%d")
+today_str = get_eastern_now().strftime("%Y-%m-%d")
 docx_name = f"Investment_Report_{today_str}.docx"
 pdf_name = f"Investment_Report_{today_str}.pdf"
 
