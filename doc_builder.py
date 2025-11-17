@@ -713,14 +713,19 @@ def build_report(
             ]
         )
 
-    total_pl_row = ["TOTAL"]
-    total_pl_row.append(fmt_dollar(total_1d_pl))
+        total_pl_row = ["TOTAL"]
 
-    for col in ["1W $", "1M $", "3M $", "6M $"]:
-        total_val = float(dollar_pl_sorted[col].sum(skipna=True))
-        total_pl_row.append(fmt_dollar(total_val))
+        # 1D $: sum of ticker-level 1D $ so TOTAL matches the rows above
+        sum_1d = float(dollar_pl_sorted["1D $"].sum(skipna=True))
+        total_pl_row.append(fmt_dollar(sum_1d))
 
-    pl_rows.append(total_pl_row)
+        # Other horizons: sum of per-ticker dollar P/L (unchanged)
+        for col in ["1W $", "1M $", "3M $", "6M $"]:
+            total_val = float(dollar_pl_sorted[col].sum(skipna=True))
+            total_pl_row.append(fmt_dollar(total_val))
+
+        pl_rows.append(total_pl_row)
+
 
     add_table(
         ["Ticker", "1D $", "1W $", "1M $", "3M $", "6M $"],
