@@ -1,15 +1,19 @@
 import os
 
 # ----------------------------- CONFIG -----------------------------
+# Central configuration for the portfolio report. This file is intentionally
+# simple: it defines file locations, target behavior, and static assumptions.
+# No business logic or math lives here beyond fixed constants.
 
 
-def _detect_base_input_dir():
+def _detect_base_input_dir() -> str:
     """
     Universal base directory detection:
-      - If PORTFOLIO_INPUT_DIR env var is set, use that
-      - Else if running in Colab and Drive folder exists, use:
-            /content/drive/MyDrive/Investment Report Inputs
-      - Else default to current directory
+
+      1) If the environment variable PORTFOLIO_INPUT_DIR is set, use that.
+      2) Else, if running in Google Colab and the Drive folder exists, use:
+             /content/drive/MyDrive/Investment Report Inputs
+      3) Else, fall back to the current working directory (".").
     """
     env_dir = os.environ.get("PORTFOLIO_INPUT_DIR")
     if env_dir:
@@ -17,7 +21,8 @@ def _detect_base_input_dir():
 
     # Try to detect Colab
     try:
-        import google.colab  # type: ignore
+        import google.colab  # type: ignore  # noqa: F401
+
         in_colab = True
     except Exception:
         in_colab = False
@@ -31,8 +36,10 @@ def _detect_base_input_dir():
     return "."
 
 
+# Base directory for all input CSVs
 BASE_INPUT_DIR = _detect_base_input_dir()
 
+# Core input files
 HOLDINGS_CSV = os.path.join(BASE_INPUT_DIR, "sample holdings.csv")
 ASSET_TARGETS_CSV = os.path.join(BASE_INPUT_DIR, "targets_asset.csv")  # optional
 
@@ -41,17 +48,28 @@ ASSET_TARGETS_CSV = os.path.join(BASE_INPUT_DIR, "targets_asset.csv")  # optiona
 #   "equal" -> equal weight among tickers in that class
 TARGET_SPLIT_METHOD = "value"
 
+# Risk-free rate (for any future risk/return extensions)
 RISK_FREE_RATE = 0.04
+
+# Monthly contribution assumption used in projections
 monthly_contrib = 250.0
+
+# Main color palette for charts
 COLOR_MAIN = ["#2563EB", "#10B981", "#F59E0B", "#6366F1", "#14B8A6"]
 
-# Optional: target total portfolio value (set to a number, or leave as None)
+# Optional: target total portfolio value.
+# - If set to a float, this is used for "target_value" calculations.
+# - If set to None, current total portfolio value is used.
 TARGET_PORTFOLIO_VALUE = 50000.0
 
-# Optional: extra folders to copy finished reports into (for local runs)
-EXTRA_OUTPUT_DIRS = [r"G:\My Drive\Investment Report Outputs"]
+# Optional: extra folders to copy finished reports into (for local runs).
+# These must exist; missing paths are skipped gracefully.
+EXTRA_OUTPUT_DIRS = [
+    r"G:\My Drive\Investment Report Outputs",
+]
 
-# Illustrative long-run assumptions for Risk/Return views
+# Illustrative long-run assumptions for Risk/Return views.
+# These are NOT derived from market data; they are static reference points.
 RISK_RETURN = {
     "US Equities":            {"return": 8.0,  "vol": 15.0},
     "International Equity":   {"return": 8.5,  "vol": 17.0},
@@ -65,7 +83,9 @@ RISK_RETURN = {
     "Digital Assets":         {"return": 11.0, "vol": 70.0},
 }
 
-# ETF sector map from your original code
+# ETF sector map:
+# Percentage weights should sum to ~100 for each ticker. These are
+# approximate and used only for the sector heatmap, not for P&L math.
 ETF_SECTOR_MAP = {
     "VOO": {
         "Tech": 29.0,
