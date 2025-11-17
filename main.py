@@ -218,19 +218,39 @@ for name, ticker in benchmarks.items():
         }
     )
 
+# Build portfolio daily value series starting from start_year
 portfolio_values = build_portfolio_value_series(df, start_year, today)
+
+# ---- FIXED 1D P/L AND 1D % (per-ticker based, consistent with tables) ----
+import numpy as np
 
 summary_1d_return = np.nan
 total_1d_pl = float("nan")
 
-if portfolio_values is not None and not portfolio_values.empty:
-    pv = portfolio_values.dropna()
-    if len(pv) >= 2:
-        last_two = pv.iloc[-2:]
-        daily_ret = last_two.pct_change().dropna()
-        if not daily_ret.empty:
-            summary_1d_return = float(daily_ret.iloc[-1] * 100.0)
-        total_1d_pl = float(last_two.iloc[-1] - last_two.iloc[0])
+total_value_now = float(df["value"].sum())
+pl_1d_list = []
+
+for _, row in df.iterrows():
+    t = row["ticker"]
+    cur_val = float(row["value"])
+    try:
+        price_data = yf.Ticker(t).history(period="2d")
+        if len(price_data) < 2:
+            continue
+        prev_close = float(price_data["Close"].iloc[-2])
+        current = float(price_data["Close"].iloc[-1])
+        r_1d = (current / prev_close - 1.0)  # simple 1D return
+        pl_1d = cur_val * r_1d
+        pl_1d_list.append(pl_1d)
+    except Exception:
+        continue
+
+if pl_1d_list:
+    total_1d_pl = float(sum(pl_1d_list))
+    summary_1d_return = (
+        (total_1d_pl / total_value_now) * 100.0 if total_value_now > 0 else np.nan
+    )
+
 
 port_mtd, total_mtd_pl = twr_over_period(portfolio_values, start_month, today)
 port_ytd, total_ytd_pl = twr_over_period(portfolio_values, start_year, today)
