@@ -4,3 +4,6 @@ numpy
 matplotlib
 python-docx
 docx2pdf
+openpyxl
+pillow
+python-dateutil
