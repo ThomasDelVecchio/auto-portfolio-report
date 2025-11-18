@@ -219,16 +219,11 @@ def twr_over_period(portfolio_values: pd.Series,
 
 
 def read_asset_targets(path: str) -> pd.DataFrame | None:
-    """
-    Read an asset-class target file with columns:
-      - asset_class
-      - target_pct
-    Normalize target_pct so the column sums to 100.00.
-    """
     try:
-        df = pd.read_csv(path)
+        df = pd.read_csv(path, encoding="utf-8-sig")
     except Exception:
         return None
+
     try:
         ac = _norm_col(df, "asset_class")
         tp = _norm_col(df, "target_pct")
@@ -236,7 +231,14 @@ def read_asset_targets(path: str) -> pd.DataFrame | None:
         return None
 
     out = df.rename(columns={ac: "asset_class", tp: "target_pct"}).copy()
-    out["asset_class"] = out["asset_class"].astype(str).str.strip()
+    out["asset_class"] = (
+        out["asset_class"]
+        .astype(str)
+        .str.replace("\ufeff", "", regex=False)
+        .str.replace("\u200b", "", regex=False)
+        .str.normalize("NFKC")
+        .str.strip()
+    )
     out["target_pct"] = pd.to_numeric(out["target_pct"], errors="coerce").fillna(0.0)
 
     total = float(out["target_pct"].sum())
