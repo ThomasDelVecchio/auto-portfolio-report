@@ -231,39 +231,35 @@ def build_report(
     # EXEC SUMMARY
     # ---------------------------------------------------------------
     doc.add_heading("Executive Summary", level=1)
-    doc.add_paragraph(
-        "This executive summary provides a high-level snapshot of your portfolio using "
-        "live market data, including valuation, recent performance, diversification, "
-        "rebalancing needs, and positioning versus key benchmarks."
-    )
 
     # Snapshot
     doc.add_heading("Portfolio Snapshot", level=2)
-    # -------- SIMPLIFIED PORTFOLIO SNAPSHOT (ONLY 1D, 1W, MTD) --------
-    snapshot = [
+
+    # ---- Returns & P/L by horizon (vertical, clean) ----
+    perf_headers = ["Horizon", "Return %", "P/L ($)"]
+    perf_rows = [
+        ["1D",      fmt_pct(summary_1d_return), fmt_dollar(total_1d_pl)],
+        ["1W",      fmt_pct(port_1w_return),    fmt_dollar(total_1w_pl)],
+        ["1M",  fmt_pct(port_1m_return),    fmt_dollar(total_1m_pl)],
+        ["3M",  fmt_pct(port_3m_return),    fmt_dollar(total_3m_pl)],
+        ["6M",  fmt_pct(port_6m_return),    fmt_dollar(total_6m_pl)],
+        ["MTD", fmt_pct(port_mtd),          fmt_dollar(total_mtd_pl)],
+        ["YTD", fmt_pct(port_ytd),          fmt_dollar(total_ytd_pl)],
+    ]
+
+    add_table(perf_headers, perf_rows, right_align_cols=[1, 2])
+
+    # ---- Key metrics underneath ----
+    key_rows = [
         ["Total Value", fmt_dollar(summary_total_value)],
     ]
 
     if summary_target_value is not None:
-        snapshot.append(["Target Portfolio Value", fmt_dollar(summary_target_value)])
+        key_rows.append(["Target Portfolio Value", fmt_dollar(summary_target_value)])
 
-    snapshot.extend([
-        ["1D Return", fmt_pct(summary_1d_return)],
-        ["Total 1D P/L", fmt_dollar(total_1d_pl)],
+    key_rows.append(["Number of Holdings", str(summary_num_holdings)])
 
-        ["1W Return", fmt_pct(port_1w_return)],
-        ["Total 1W P/L", fmt_dollar(total_1w_pl)],
-
-        ["MTD Return", fmt_pct(port_mtd)],
-        ["Total MTD P/L", fmt_dollar(total_mtd_pl)],
-
-        ["Number of Holdings", str(summary_num_holdings)],
-    ])
-
-    # Force plain text so Word doesn’t misalign rows
-    clean_snapshot = [[str(m), str(v)] for m, v in snapshot]
-
-    add_table(["Metric", "Value"], clean_snapshot, right_align_cols=[1])
+    add_table(["Metric", "Value"], key_rows, right_align_cols=[1])
 
 
     # Highlights
@@ -603,23 +599,12 @@ def build_report(
             ]
         )
 
-    # TOTAL row — now uses TRUE PORTFOLIO RETURNS (not weighted avg!)
-    total_row = [
-        "TOTAL",
-        fmt_pct(summary_1d_return),
-        fmt_pct(port_1w_return),
-        fmt_pct(port_1m_return),
-        fmt_pct(port_3m_return),
-        fmt_pct(port_6m_return),
-    ]
-
-    rows.append(total_row)
-
     add_table(
         ["Ticker", "1D %", "1W %", "1M %", "3M %", "6M %"],
         rows,
         right_align_cols=[1, 2, 3, 4, 5],
     )
+
 
     # ===================================================================
     # HOLDINGS — DOLLAR P/L TABLE
@@ -642,22 +627,12 @@ def build_report(
             ]
         )
 
-    total_pl_row = [
-        "TOTAL",
-        fmt_dollar(total_1d_pl),
-        fmt_dollar(total_1w_pl),
-        fmt_dollar(total_1m_pl),
-        fmt_dollar(total_3m_pl),
-        fmt_dollar(total_6m_pl),
-    ]
-
-    pl_rows.append(total_pl_row)
-
     add_table(
         ["Ticker", "1D $", "1W $", "1M $", "3M $", "6M $"],
         pl_rows,
         right_align_cols=[1, 2, 3, 4, 5],
     )
+
 
     # ===================================================================
     # GROWTH PROJECTIONS
