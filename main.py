@@ -52,11 +52,25 @@ df = raw.rename(columns={tcol: "ticker", scol: "shares"}).copy()
 df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
 df["shares"] = pd.to_numeric(df["shares"], errors="coerce").fillna(0.0)
 
+# ---------------- ASSET CLASS CLEANUP ----------------
+
+# Ensure asset_class column exists and is named consistently
 if "asset_class" not in [c.strip().lower() for c in df.columns]:
     df["asset_class"] = "Unknown"
 else:
     ac_col = [c for c in df.columns if c.strip().lower() == "asset_class"][0]
     df.rename(columns={ac_col: "asset_class"}, inplace=True)
+
+# Clean BOM / zero-width characters so it matches targets
+df["asset_class"] = (
+    df["asset_class"]
+    .astype(str)
+    .str.replace("\ufeff", "", regex=False)   # BOM
+    .str.replace("\u200b", "", regex=False)   # zero-width space
+    .str.normalize("NFKC")
+    .str.strip()
+)
+
 
 # Prices
 prices = []
@@ -108,10 +122,15 @@ core_df["target_pct"] = (
 core_df["target_value"] = core_total * (core_df["target_pct"] / 100.0)
 
 df = df.merge(
-    core_df[["ticker", "target_value", "target_pct", "core_allocation_pct"]],
+    core_df[["ticker", "target_value", "core_allocation_pct"]],
     on="ticker",
     how="left",
 )
+
+# Ensure ticker CSV target_pct remains numeric if it exists
+if "target_pct" in df.columns:
+    df["target_pct"] = pd.to_numeric(df["target_pct"], errors="coerce").fillna(0.0)
+
 
 # --- TRUE PORTFOLIO-LEVEL CONTRIBUTE-TO-TARGET (Scaled, No Negatives) ---
 
@@ -132,8 +151,6 @@ else:
     df["contribute_to_target"] = (
         pos_gaps / total_shortfall * total_shortfall
     ).fillna(0.0)
-
-
 
 # ---------------------------------------------------------
 # 3) SECTOR MAP (ETF + single stocks)
@@ -301,25 +318,18 @@ for _, r in df.iterrows():
 
 dollar_pl_df = pd.DataFrame(pl_rows)
 
+# ---- Portfolio TWR Horizons ----
+series_1w = build_portfolio_value_series(df, start_1w, today)
+port_1w_return, total_1w_pl = twr_over_period(series_1w, start_1w, today)
 
-# ---------------------------------------------------------
-# TRUE PORTFOLIO-LEVEL HORIZON RETURNS (Professional)
-# ---------------------------------------------------------
+series_1m = build_portfolio_value_series(df, start_1m, today)
+port_1m_return, total_1m_pl = twr_over_period(series_1m, start_1m, today)
 
-def port_ret_and_pl(start_ts):
-    """Compute true portfolio return and P/L from start_ts → today (no cash flows)."""
-    series = build_portfolio_value_series(df, start_ts, today)
-    if series is None or series.empty or len(series) < 2:
-        return np.nan, np.nan
-    ret = (series.iloc[-1] / series.iloc[0] - 1) * 100.0
-    pl = float(series.iloc[-1] - series.iloc[0])
-    return float(ret), float(pl)
+series_3m = build_portfolio_value_series(df, start_3m, today)
+port_3m_return, total_3m_pl = twr_over_period(series_3m, start_3m, today)
 
-
-port_1w_return, total_1w_pl = port_ret_and_pl(start_1w)
-port_1m_return, total_1m_pl = port_ret_and_pl(start_1m)
-port_3m_return, total_3m_pl = port_ret_and_pl(start_3m)
-port_6m_return, total_6m_pl = port_ret_and_pl(start_6m)
+series_6m = build_portfolio_value_series(df, start_6m, today)
+port_6m_return, total_6m_pl = twr_over_period(series_6m, start_6m, today)
 
 
 # ---------------------------------------------------------
@@ -560,6 +570,153 @@ plt.savefig(asset_pie_stream, format="png", bbox_inches="tight", facecolor="whit
 asset_pie_stream.seek(0)
 plt.close()
 
+# ---------------------------------------------------------
+# MTD & YTD PORTFOLIO VS BENCHMARKS — FIXED + CLEAN
+# ---------------------------------------------------------
+
+def compute_cumulative_return_series(prices: pd.Series):
+    """
+    Convert a price series into cumulative return (%) series.
+    Fully safe against NaN, empty index, or missing points.
+    """
+    if prices is None or len(prices) == 0:
+        return pd.Series(dtype=float)
+
+    clean = prices.dropna()
+    if len(clean) == 0:
+        return pd.Series(dtype=float)
+
+    base = clean.iloc[0]
+    return (prices / base - 1) * 100
+
+
+def build_multi_benchmark_chart(port_ret, sp_ret, aor_ret, aok_ret, title):
+    """
+    Render a cumulative return comparison chart for:
+    Portfolio (TWR), S&P500, AOR, and AOK.
+    """
+    plt.figure(figsize=(7, 4.5))
+
+    # --- Plot all 4 lines ---
+    plt.plot(port_ret.index, port_ret.values,
+             label="Portfolio (TWR)", linewidth=2)
+    plt.plot(sp_ret.index, sp_ret.values,
+             label="S&P 500 (^GSPC)", linewidth=2)
+    plt.plot(aor_ret.index, aor_ret.values,
+             label="AOR (Global 60/40)", linewidth=2)
+    plt.plot(aok_ret.index, aok_ret.values,
+             label="AOK (Conservative 40/60)", linewidth=2)
+
+    # --- Formatting ---
+    plt.title(title, fontsize=12, weight="bold")
+    plt.ylabel("Cumulative Return (%)")
+    plt.xlabel("Date")
+    plt.grid(alpha=0.3)
+    plt.legend(fontsize=8)
+
+    # --- CLEAN X-AXIS (fixes scuffed axis spacing) ---
+    plt.gca().xaxis.set_major_locator(plt.MaxNLocator(6))
+    plt.gcf().autofmt_xdate(rotation=30)
+
+    plt.tight_layout()
+
+    # --- Export image ---
+    stream = BytesIO()
+    plt.savefig(stream, format="png", bbox_inches="tight", facecolor="white")
+    stream.seek(0)
+    plt.close()
+
+    return stream
+
+
+# ----------------------------
+# Build MTD & YTD price series (FIXED + CLEAN)
+# ----------------------------
+
+bench_symbols = {
+    "sp": "^GSPC",
+    "aor": "AOR",
+    "aok": "AOK",
+}
+
+# ---- 1) Ensure all dates are tz-naive EXACTLY ONCE ----
+today = pd.Timestamp(today).tz_localize(None)
+start_month = pd.Timestamp(start_month).tz_localize(None)
+start_year = pd.Timestamp(start_year).tz_localize(None)
+
+# ---- 2) Portfolio series ----
+portfolio_values.index = pd.to_datetime(portfolio_values.index).tz_localize(None)
+
+portfolio_mtd_vals = portfolio_values.loc[portfolio_values.index >= start_month]
+portfolio_ytd_vals = portfolio_values.copy()
+
+# ---- 3) Benchmark prices ----
+sp_mtd  = yf.download(bench_symbols["sp"],  start=start_month, end=today)["Close"]
+aor_mtd = yf.download(bench_symbols["aor"], start=start_month, end=today)["Close"]
+aok_mtd = yf.download(bench_symbols["aok"], start=start_month, end=today)["Close"]
+
+sp_ytd  = yf.download(bench_symbols["sp"],  start=start_year, end=today)["Close"]
+aor_ytd = yf.download(bench_symbols["aor"], start=start_year, end=today)["Close"]
+aok_ytd = yf.download(bench_symbols["aok"], start=start_year, end=today)["Close"]
+
+# ---- 4) Normalize indices BEFORE alignment ----
+def norm(s):
+    return pd.to_datetime(s.index).tz_localize(None)
+
+portfolio_mtd_vals.index = norm(portfolio_mtd_vals)
+portfolio_ytd_vals.index = norm(portfolio_ytd_vals)
+
+sp_mtd.index  = norm(sp_mtd)
+aor_mtd.index = norm(aor_mtd)
+aok_mtd.index = norm(aok_mtd)
+
+sp_ytd.index  = norm(sp_ytd)
+aor_ytd.index = norm(aor_ytd)
+aok_ytd.index = norm(aok_ytd)
+
+# ---- 5) Build business-day indices ----
+idx_mtd = pd.date_range(start=start_month, end=today, freq="B")
+idx_ytd = pd.date_range(start=start_year, end=today, freq="B")
+
+def align(series, idx):
+    if len(series) == 0:
+        return pd.Series(index=idx, dtype=float)
+    return series.reindex(idx).ffill()
+
+# ---- 6) Align everything ----
+port_mtd_vals = align(portfolio_mtd_vals, idx_mtd)
+sp_mtd_vals   = align(sp_mtd, idx_mtd)
+aor_mtd_vals  = align(aor_mtd, idx_mtd)
+aok_mtd_vals  = align(aok_mtd, idx_mtd)
+
+port_ytd_vals = align(portfolio_ytd_vals, idx_ytd)
+sp_ytd_vals   = align(sp_ytd, idx_ytd)
+aor_ytd_vals  = align(aor_ytd, idx_ytd)
+aok_ytd_vals  = align(aok_ytd, idx_ytd)
+
+# ---- 7) Convert to cumulative returns ----
+port_mtd_ret = compute_cumulative_return_series(port_mtd_vals)
+sp_mtd_ret   = compute_cumulative_return_series(sp_mtd_vals)
+aor_mtd_ret  = compute_cumulative_return_series(aor_mtd_vals)
+aok_mtd_ret  = compute_cumulative_return_series(aok_mtd_vals)
+
+port_ytd_ret = compute_cumulative_return_series(port_ytd_vals)
+sp_ytd_ret   = compute_cumulative_return_series(sp_ytd_vals)
+aor_ytd_ret  = compute_cumulative_return_series(aor_ytd_vals)
+aok_ytd_ret  = compute_cumulative_return_series(aok_ytd_vals)
+
+
+
+# Build chart PNG streams
+mtd_chart_stream = build_multi_benchmark_chart(
+    port_mtd_ret, sp_mtd_ret, aor_mtd_ret, aok_mtd_ret,
+    "MTD Cumulative Return — Portfolio (TWR) vs Benchmarks"
+)
+
+ytd_chart_stream = build_multi_benchmark_chart(
+    port_ytd_ret, sp_ytd_ret, aor_ytd_ret, aok_ytd_ret,
+    "YTD Cumulative Return — Portfolio (TWR) vs Benchmarks"
+)
 
 # ---------------------------------------------------------
 # 12) BUILD REPORT
@@ -594,4 +751,8 @@ build_report(
     compound_stream=compound_stream,
     vol_stream=vol_stream,
     risk_stream=risk_stream,
+    mtd_chart_stream=mtd_chart_stream,
+    ytd_chart_stream=ytd_chart_stream,
+    proj_rows=proj_rows,
 )
+
