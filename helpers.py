@@ -140,14 +140,14 @@ def build_portfolio_value_series(df_holdings: pd.DataFrame,
     prices and current share counts. Assumes no cash flows.
     """
 
-    # --- FIX: normalize timestamps (tz-aware → tz-naive) ---
+    # Normalize dates to tz-naive Timestamps
     start_date = pd.to_datetime(start_date)
     end_date = pd.to_datetime(end_date)
+
     if start_date.tzinfo is not None:
-        start_date = start_date.tz_localize(None)
+        start_date = start_date.tz_convert(None)
     if end_date.tzinfo is not None:
-        end_date = end_date.tz_localize(None)
-    # --------------------------------------------------------
+        end_date = end_date.tz_convert(None)
 
     tickers = df_holdings["ticker"].astype(str).unique().tolist()
     shares = df_holdings.set_index("ticker")["shares"].astype(float)
@@ -161,6 +161,10 @@ def build_portfolio_value_series(df_holdings: pd.DataFrame,
                 continue
 
             prices = hist["Close"].astype(float)
+            # If price index is tz-aware, make it tz-naive
+            if getattr(prices.index, "tz", None) is not None:
+                prices.index = prices.index.tz_convert(None)
+
             values = prices * float(shares.get(t, 0.0))
             values.name = t
             all_series.append(values)
@@ -181,38 +185,48 @@ def twr_over_period(portfolio_values: pd.Series,
                     start_date,
                     end_date):
     """
-    True time-weighted rate of return over [start_date, end_date] for a
-    no-cash-flow portfolio, using chain-linked daily returns.
-    Returns (twr_pct, total_pl_dollars).
+    Time-weighted return over [start_date, end_date] for a no-cash-flow
+    portfolio, implemented as a simple start/end return on the portfolio
+    value series.
+
+    Returns:
+        (twr_pct, total_pl_dollars)
+
+        twr_pct is in PERCENT units (e.g. 7.85 means +7.85%).
     """
 
     if portfolio_values is None or portfolio_values.empty:
         return np.nan, np.nan
 
-    # --- FIX: normalize timestamps (tz-aware → tz-naive) ---
+    # Work on a copy and normalize index to tz-naive Timestamps
+    series = portfolio_values.copy()
+    series.index = pd.to_datetime(series.index)
+
+    if getattr(series.index, "tz", None) is not None:
+        series.index = series.index.tz_convert(None)
+
     start_ts = pd.to_datetime(start_date)
     end_ts = pd.to_datetime(end_date)
-    if start_ts.tzinfo is not None:
-        start_ts = start_ts.tz_localize(None)
-    if end_ts.tzinfo is not None:
-        end_ts = end_ts.tz_localize(None)
-    # --------------------------------------------------------
 
-    series = portfolio_values[
-        (portfolio_values.index >= start_ts) &
-        (portfolio_values.index <= end_ts)
-    ].sort_index()
+    if start_ts.tzinfo is not None:
+        start_ts = start_ts.tz_convert(None)
+    if end_ts.tzinfo is not None:
+        end_ts = end_ts.tz_convert(None)
+
+    # Slice to the requested window
+    series = series[(series.index >= start_ts) & (series.index <= end_ts)].dropna().sort_index()
 
     if len(series) < 2:
         return np.nan, np.nan
 
-    daily_ret = series.pct_change().dropna()
-    if daily_ret.empty:
+    start_val = float(series.iloc[0])
+    end_val = float(series.iloc[-1])
+
+    if start_val <= 0:
         return np.nan, np.nan
 
-    growth = float((1.0 + daily_ret).prod())
-    twr_pct = (growth - 1.0) * 100.0
-    total_pl = float(series.iloc[-1] - series.iloc[0])
+    total_pl = end_val - start_val
+    twr_pct = (end_val / start_val - 1.0) * 100.0
 
     return float(twr_pct), float(total_pl)
 
