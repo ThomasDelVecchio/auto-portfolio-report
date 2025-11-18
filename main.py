@@ -105,31 +105,29 @@ asset_df["allocation_pct"] = normalize_allocations(asset_df["allocation_pct"])
 asset_targets_df = read_asset_targets(ASSET_TARGETS_CSV)
 TICKER_TARGETS_PCT = build_ticker_targets(df.copy(), asset_targets_df, TARGET_SPLIT_METHOD)
 
-core_df = df.copy()
-core_total = TARGET_PORTFOLIO_VALUE if TARGET_PORTFOLIO_VALUE is not None else total_value
-
-core_df["core_allocation_pct"] = np.where(
-    total_value > 0, (core_df["value"] / total_value * 100.0), 0.0
-)
-
-core_df["target_pct"] = (
-    core_df["ticker"]
+# Overwrite / define ticker-level target_pct using the normalized mapping
+df["target_pct"] = (
+    df["ticker"]
     .map(TICKER_TARGETS_PCT)
     .astype(float)
     .fillna(0.0)
 )
 
+core_total = TARGET_PORTFOLIO_VALUE if TARGET_PORTFOLIO_VALUE is not None else total_value
+
+core_df = df.copy()
+core_df["core_allocation_pct"] = np.where(
+    total_value > 0, (core_df["value"] / total_value * 100.0), 0.0
+)
+
 core_df["target_value"] = core_total * (core_df["target_pct"] / 100.0)
 
+# NOTE: df already has the correct target_pct; don't merge it again
 df = df.merge(
     core_df[["ticker", "target_value", "core_allocation_pct"]],
     on="ticker",
     how="left",
 )
-
-# Ensure ticker CSV target_pct remains numeric if it exists
-if "target_pct" in df.columns:
-    df["target_pct"] = pd.to_numeric(df["target_pct"], errors="coerce").fillna(0.0)
 
 
 # --- TRUE PORTFOLIO-LEVEL CONTRIBUTE-TO-TARGET (Scaled, No Negatives) ---
@@ -268,33 +266,60 @@ start_1m = today - pd.DateOffset(months=1)
 start_3m = today - pd.DateOffset(months=3)
 start_6m = today - pd.DateOffset(months=6)
 
+# Normalize "today" to a date for daily-bar comparison
+today_date = pd.Timestamp(today).date()
+
 # Ticker-level returns
 ticker_horizon_rows = []
+
+
 for _, row in df.iterrows():
     t = row["ticker"]
     d = {"Ticker": t}
 
-    # 1D: last close vs the previous close
+    # --- 1D return: prior close -> live price (brokerage-style) ---
     try:
-        hist = yf.Ticker(t).history(period="2d")
-        if len(hist) >= 2:
-            prev_close = float(hist["Close"].iloc[-2])
-            curr = float(hist["Close"].iloc[-1])
-            d["1D %"] = round(((curr / prev_close) - 1) * 100, 2)
-        else:
+        live_price = float(row["price"])
+        if live_price <= 0:
             d["1D %"] = np.nan
+        else:
+            # Look back a few days to find the last official closes
+            hist = yf.download(t, period="5d", interval="1d", progress=False)
+            if hist.empty or "Close" not in hist.columns:
+                d["1D %"] = np.nan
+            else:
+                close = hist["Close"].dropna()
+                if close.empty:
+                    d["1D %"] = np.nan
+                else:
+                    # Last available daily bar
+                    last_idx = close.index[-1]
+                    last_date = pd.Timestamp(last_idx).date()
+
+                    # If today's bar exists and we have at least 2 points,
+                    # prior close = previous bar; otherwise prior close = last bar.
+                    if last_date == today_date and len(close) >= 2:
+                        prior_close = float(close.iloc[-2])
+                    else:
+                        prior_close = float(close.iloc[-1])
+
+                    if prior_close > 0:
+                        d["1D %"] = round((live_price / prior_close - 1.0) * 100.0, 2)
+                    else:
+                        d["1D %"] = np.nan
     except Exception:
         d["1D %"] = np.nan
 
-    # 1W = last 7 days
-    d["1W %"] = round(get_return_pct(t, start_1w, today), 2)
 
-    # Calendar-based anchors for 1M/3M/6M
+    # --- 1W / 1M / 3M / 6M ---
+    d["1W %"] = round(get_return_pct(t, start_1w, today), 2)
     d["1M %"] = round(get_return_pct(t, start_1m, today), 2)
     d["3M %"] = round(get_return_pct(t, start_3m, today), 2)
     d["6M %"] = round(get_return_pct(t, start_6m, today), 2)
 
+    # Append final row
     ticker_horizon_rows.append(d)
+
 
 returns_df = pd.DataFrame(ticker_horizon_rows)
 
@@ -639,10 +664,17 @@ bench_symbols = {
     "aok": "AOK",
 }
 
-# ---- 1) Ensure all dates are tz-naive EXACTLY ONCE ----
-today = pd.Timestamp(today).tz_localize(None)
-start_month = pd.Timestamp(start_month).tz_localize(None)
-start_year = pd.Timestamp(start_year).tz_localize(None)
+# ---- 1) Correct timezone cleanup ----
+def make_tz_naive(ts):
+    ts = pd.Timestamp(ts)
+    if ts.tzinfo is not None:
+        return ts.tz_convert(None)
+    return ts
+
+today = make_tz_naive(today)
+start_month = make_tz_naive(start_month)
+start_year  = make_tz_naive(start_year)
+
 
 # ---- 2) Portfolio series ----
 portfolio_values.index = pd.to_datetime(portfolio_values.index).tz_localize(None)
@@ -651,13 +683,28 @@ portfolio_mtd_vals = portfolio_values.loc[portfolio_values.index >= start_month]
 portfolio_ytd_vals = portfolio_values.copy()
 
 # ---- 3) Benchmark prices ----
-sp_mtd  = yf.download(bench_symbols["sp"],  start=start_month, end=today)["Close"]
-aor_mtd = yf.download(bench_symbols["aor"], start=start_month, end=today)["Close"]
-aok_mtd = yf.download(bench_symbols["aok"], start=start_month, end=today)["Close"]
 
-sp_ytd  = yf.download(bench_symbols["sp"],  start=start_year, end=today)["Close"]
-aor_ytd = yf.download(bench_symbols["aor"], start=start_year, end=today)["Close"]
-aok_ytd = yf.download(bench_symbols["aok"], start=start_year, end=today)["Close"]
+def safe_close_series(symbol, start, end):
+    """
+    Download Close prices for a symbol between start and end.
+    Returns an empty float Series if data is unavailable.
+    """
+    try:
+        data = yf.download(symbol, start=start, end=end, progress=False)
+        if data.empty or "Close" not in data.columns:
+            return pd.Series(dtype=float)
+        return data["Close"].astype(float)
+    except Exception:
+        return pd.Series(dtype=float)
+
+sp_mtd  = safe_close_series(bench_symbols["sp"],  start_month, today)
+aor_mtd = safe_close_series(bench_symbols["aor"], start_month, today)
+aok_mtd = safe_close_series(bench_symbols["aok"], start_month, today)
+
+sp_ytd  = safe_close_series(bench_symbols["sp"],  start_year, today)
+aor_ytd = safe_close_series(bench_symbols["aor"], start_year, today)
+aok_ytd = safe_close_series(bench_symbols["aok"], start_year, today)
+
 
 # ---- 4) Normalize indices BEFORE alignment ----
 def norm(s):
