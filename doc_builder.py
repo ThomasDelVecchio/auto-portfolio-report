@@ -47,6 +47,10 @@ def build_report(
     compound_stream,
     vol_stream,
     risk_stream,
+    mtd_chart_stream,
+    ytd_chart_stream,
+    proj_rows, 
+
 ):
 
     # ---------------------------------------------------------------
@@ -159,6 +163,10 @@ def build_report(
     style.font.name = "Calibri"
     style._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
     style.font.size = Pt(11)
+    section = doc.sections[0]
+    section.top_margin = Inches(.6)      # was 1.0
+    section.bottom_margin = Inches(.6)   # was 1.0
+
 
     # Helper to add tables
     def add_table(headers, rows, right_align_cols=None):
@@ -231,7 +239,7 @@ def build_report(
 
     # Snapshot
     doc.add_heading("Portfolio Snapshot", level=2)
-        # -------- SIMPLIFIED PORTFOLIO SNAPSHOT (ONLY 1D, 1W, MTD) --------
+    # -------- SIMPLIFIED PORTFOLIO SNAPSHOT (ONLY 1D, 1W, MTD) --------
     snapshot = [
         ["Total Value", fmt_dollar(summary_total_value)],
     ]
@@ -395,6 +403,7 @@ def build_report(
     # ===================================================================
     # ASSET CLASS OVERVIEW
     # ===================================================================
+
     doc.add_heading("Asset Class Allocation Overview", level=2)
 
     if asset_targets_df is not None and not asset_targets_df.empty:
@@ -427,11 +436,19 @@ def build_report(
             ]
         )
 
-        add_table(
+        table = add_table(
             ["Asset Class", "Value ($)", "Actual %", "Target %", "Delta %"],
             ac_rows,
             right_align_cols=[1, 2, 3, 4],
         )
+
+        # --- MAKE ENTIRE TABLE NON-BREAKING ---
+        for row in table.rows:
+            tr = row._tr
+            trPr = tr.get_or_add_trPr()
+            cant_split = OxmlElement("w:cantSplit")
+            trPr.append(cant_split)
+
     else:
         ac_rows = []
         for _, r in asset_df.iterrows():
@@ -478,8 +495,47 @@ def build_report(
     # ===================================================================
     doc.add_page_break()
 
+    # ---------------------------------------------------------------
+    # TIME-SERIES PERFORMANCE CHARTS (MTD & YTD) — COMBINED PAGE
+    # ---------------------------------------------------------------
+    doc.add_heading("Time-Series Performance Charts", level=1)
+
+    # --- Ensure extremely tight spacing so both charts stay together ---
+    tight = doc.styles['Normal']
+    tight.paragraph_format.space_before = Pt(0)
+    tight.paragraph_format.space_after = Pt(1)
+
+    # ----- MTD Chart -----
+    doc.add_heading("MTD Cumulative Return — Portfolio vs Benchmarks", level=2)
+    p1 = doc.add_paragraph()
+    r1 = p1.add_run()
+    r1.add_picture(mtd_chart_stream, width=Inches(5.2))
+
+    # micro-spacer to avoid page split
+    sp1 = doc.add_paragraph()
+    sp1.paragraph_format.space_before = Pt(0)
+    sp1.paragraph_format.space_after = Pt(0)
+
+    # ----- YTD Chart -----
+    doc.add_heading("YTD Cumulative Return — Portfolio vs Benchmarks", level=2)
+    p2 = doc.add_paragraph()
+    r2 = p2.add_run()
+    r2.add_picture(ytd_chart_stream, width=Inches(5.2))
+
+    # Caption for BOTH charts
+    cap = doc.add_paragraph(
+        "Figure: Month-to-date and year-to-date cumulative performance vs benchmarks."
+        )
+    cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Force a page break AFTER both charts & caption
+    doc.add_page_break()
+
+
+    # Continue existing performance section
     doc.add_heading("Performance & Growth", level=1)
     doc.add_heading("Performance vs Benchmarks (MTD & YTD)", level=2)
+
 
     bench_df["MTD %"] = pd.to_numeric(bench_df["MTD %"], errors="coerce")
     bench_df["YTD %"] = pd.to_numeric(bench_df["YTD %"], errors="coerce")
@@ -614,10 +670,43 @@ def build_report(
 
     doc.add_page_break()
 
+    # ===================================================================
+    # 20-YEAR PROJECTION SCENARIOS (Dynamic Table + Chart)
+    # ===================================================================
     doc.add_heading("20-Year Projection Scenarios", level=2)
+
+    # --------- Dynamic Header Text Based on monthly_contrib ---------
+    mc = int(monthly_contrib)
+    contrib_str = f"+${mc:,}/mo" if mc > 0 else "+$0/mo"
+
+    # --------- Build header + rows for add_table() ------------------
+    headers = [
+        "Year",
+        "5% (Lump)",
+        "7% (Lump)",
+        "9% (Lump)",
+        f"5% ({contrib_str})",
+        f"7% ({contrib_str})",
+        f"9% ({contrib_str})"
+    ]
+
+    formatted_rows = []
+    for r in proj_rows:
+        year = r[0]
+        vals = [f"{v:,}" for v in r[1:]]
+        formatted_rows.append([year] + vals)
+
+    # --------- Insert as BLUE styled table --------------------------
+    add_table(headers, formatted_rows, right_align_cols=[1, 2, 3, 4, 5, 6])
+
+    doc.add_paragraph()
+
+    # --------- Insert chart right after table -----------------------
     doc.add_picture(growth_stream, width=Inches(6))
     p = doc.add_paragraph("Figure: Long-term projections.")
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
 
     # ===================================================================
     # RISK & VOLATILITY
