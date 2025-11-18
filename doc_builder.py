@@ -81,6 +81,13 @@ def build_report(
             best_row = valid_1d.sort_values("1D %", ascending=False).iloc[0]
             best_1d_line = f"{best_row['Ticker']} ({fmt_pct(best_row['1D %'])}, {fmt_dollar(best_row['1D $'])})"
 
+            worst_row = valid_1d.sort_values("1D %", ascending=True).iloc[0]
+            bottom_1d_line = f"{worst_row['Ticker']} ({fmt_pct(worst_row['1D %'])}, {fmt_dollar(worst_row['1D $'])})"
+        else:
+            best_1d_line = "N/A"
+            bottom_1d_line = "N/A"
+
+
     # Top 3 concentration
     if summary_num_holdings > 0:
         top3_pct = float(df["allocation_pct"].nlargest(min(3, summary_num_holdings)).sum())
@@ -320,9 +327,10 @@ def build_report(
             ["Top 1M Performer", top_1m_line],
             ["Bottom 1M Performer", bottom_1m_line],
             ["Best 1D Performer", best_1d_line if best_1d_line else "N/A"],
+            ["Bottom 1D Performer", bottom_1d_line if bottom_1d_line else "N/A"],
         ],
         right_align_cols=[1],
-    )
+)
 
     # Risk & Diversification
     doc.add_heading("Risk & Diversification", level=2)
