@@ -235,11 +235,30 @@ def build_report(
     # Snapshot
     doc.add_heading("Portfolio Snapshot", level=2)
 
-    # ---- Returns & P/L by horizon (vertical, clean) ----
-    perf_headers = ["Horizon", "Return %", "P/L ($)"]
-    perf_rows = [
-        ["1D",      fmt_pct(summary_1d_return), fmt_dollar(total_1d_pl)],
-        ["1W",      fmt_pct(port_1w_return),    fmt_dollar(total_1w_pl)],
+    # ---------------------------------------------------------------
+    # TABLE 1: Horizon Returns (3 Columns) — Looks clean
+    # ---------------------------------------------------------------
+    table1 = doc.add_table(rows=1, cols=3)
+    table1.style = "Light Grid Accent 1"
+    table1.autofit = False
+
+    col_widths = [Inches(2.0), Inches(1.5), Inches(1.5)]
+    for col, w in zip(table1.columns, col_widths):
+        for cell in col.cells:
+            cell.width = w
+
+    hdr = table1.rows[0].cells
+    hdr[0].text = "Horizon"
+    hdr[1].text = "Return %"
+    hdr[2].text = "P/L ($)"
+
+    for cell in hdr:
+        for run in cell.paragraphs[0].runs:
+            run.bold = True
+
+    horizon_rows = [
+        ["1D",  fmt_pct(summary_1d_return), fmt_dollar(total_1d_pl)],
+        ["1W",  fmt_pct(port_1w_return),    fmt_dollar(total_1w_pl)],
         ["1M",  fmt_pct(port_1m_return),    fmt_dollar(total_1m_pl)],
         ["3M",  fmt_pct(port_3m_return),    fmt_dollar(total_3m_pl)],
         ["6M",  fmt_pct(port_6m_return),    fmt_dollar(total_6m_pl)],
@@ -247,19 +266,50 @@ def build_report(
         ["YTD", fmt_pct(port_ytd),          fmt_dollar(total_ytd_pl)],
     ]
 
-    add_table(perf_headers, perf_rows, right_align_cols=[1, 2])
+    for h, ret, pl in horizon_rows:
+        row = table1.add_row().cells
+        row[0].text = h
+        row[1].text = ret
+        row[2].text = pl
 
-    # ---- Key metrics underneath ----
-    key_rows = [
+    # ---------------------------------------------------------------
+    # Spacer (keeps tables visually separated)
+    # ---------------------------------------------------------------
+    doc.add_paragraph()
+
+    # ---------------------------------------------------------------
+    # TABLE 2: Key Metrics (2 Columns) — ORIGINAL LOOK
+    # ---------------------------------------------------------------
+    table2 = doc.add_table(rows=1, cols=2)
+    table2.style = "Light Grid Accent 1"
+    table2.autofit = False
+
+    metric_widths = [Inches(2.0), Inches(3.0)]  # total = 5.0, aligns with table1 visually
+    for col, w in zip(table2.columns, metric_widths):
+        for cell in col.cells:
+            cell.width = w
+
+    hdr2 = table2.rows[0].cells
+    hdr2[0].text = "Metric"
+    hdr2[1].text = "Value"
+
+    for cell in hdr2:
+        for run in cell.paragraphs[0].runs:
+            run.bold = True
+
+    metric_rows = [
         ["Total Value", fmt_dollar(summary_total_value)],
     ]
 
     if summary_target_value is not None:
-        key_rows.append(["Target Portfolio Value", fmt_dollar(summary_target_value)])
+        metric_rows.append(["Target Portfolio Value", fmt_dollar(summary_target_value)])
 
-    key_rows.append(["Number of Holdings", str(summary_num_holdings)])
+    metric_rows.append(["Number of Holdings", str(summary_num_holdings)])
 
-    add_table(["Metric", "Value"], key_rows, right_align_cols=[1])
+    for label, value in metric_rows:
+        row = table2.add_row().cells
+        row[0].text = label
+        row[1].text = value
 
 
     # Highlights
