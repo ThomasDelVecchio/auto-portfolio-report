@@ -132,3 +132,62 @@ SECTOR_NAME_NORMALIZE = {
     "Consumer Cyclical": "Consumer Disc.",
     "Communication Services": "Comm Services",
 }
+
+# ===========================
+# Asset Class Short Names
+# ===========================
+ASSET_CLASS_SHORT = {
+    # U.S. Equity
+    "US Equities": "US Eq",
+    "US Equity": "US Eq",
+    "US Equity - Large Cap": "US LC",
+    "US Equity - Small Cap": "US SC",
+    "US Equity - Mid Cap": "US MC",
+    "Large Cap Equity": "LC Eq",
+    "Small Cap Equity": "SC Eq",
+    "Mid Cap Equity": "MC Eq",
+
+    # International Equity
+    "International Equity": "Intl Eq",
+    "International Equities": "Intl Eq",
+    "Developed Markets": "DM Eq",
+    "Emerging Markets": "EM Eq",
+    "Global Equity": "Global Eq",
+
+    # Bonds / Fixed Income
+    "Fixed Income": "FI",
+    "Core Bonds": "Bonds",
+    "Investment Grade Bonds": "IG Bonds",
+    "High Yield Bonds": "HY Bonds",
+    "Long-Term Treasuries": "LT Treas",
+    "Short-Term Treasuries": "ST Treas",
+    "Treasuries": "Treas",
+    "Municipal Bonds": "Muni",
+
+    # Real Assets
+    "Real Estate": "REITs",
+    "Real Estate Investment Trusts": "REITs",
+
+    # Commodities
+    "Commodities": "Cmdty",
+    "Precious Metals": "PM",
+    "Gold / Precious Metals": "Gold",
+
+    # Energy
+    "Energy": "Energy",
+
+    # Tech / Innovation
+    "Innovation/Tech": "Tech",
+    "Technology": "Tech",
+
+    # Digital Assets
+    "Digital Assets": "Digital",
+    "Crypto": "Crypto",
+    "Cryptocurrency": "Crypto",
+
+    # Other
+    "Cash": "Cash",
+    "Unknown": "Other",
+}
+
+ENABLE_SECTOR_CHART = False
