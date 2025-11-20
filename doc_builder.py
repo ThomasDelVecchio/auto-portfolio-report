@@ -49,9 +49,11 @@ def build_report(
     risk_stream,
     mtd_chart_stream,
     ytd_chart_stream,
-    proj_rows, 
-
+    proj_rows,
+    ticker_alloc_stream,
+    asset_class_alloc_stream,
 ):
+
 
     # ---------------------------------------------------------------
     # Executive Summary metrics
@@ -171,8 +173,11 @@ def build_report(
     style._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
     style.font.size = Pt(11)
     section = doc.sections[0]
-    section.top_margin = Inches(.6)      # was 1.0
-    section.bottom_margin = Inches(.6)   # was 1.0
+    section.top_margin = Inches(0.6)
+    section.bottom_margin = Inches(0.6)
+    section.left_margin = Inches(0.65)     
+    section.right_margin = Inches(0.65)     
+
 
 
     # Helper to add tables
@@ -527,22 +532,55 @@ def build_report(
 
     doc.add_heading("Visual Report – Allocation & Diversification", level=1)
 
+    # --- TICKER PIE + BAR ---
     doc.add_heading("Ticker-Level Allocation Breakdown", level=2)
-    doc.add_picture(ticker_pie_stream, width=Inches(5.5))
-    p = doc.add_paragraph("Figure 1: Allocation by ticker.")
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(4.5)
+    r = p.add_run()
+    r.add_picture(ticker_pie_stream, width=Inches(5))
+
+    p2 = doc.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p2.paragraph_format.space_before = Pt(0)
+    p2.paragraph_format.space_after = Pt(0)
+    r2 = p2.add_run()
+    r2.add_picture(ticker_alloc_stream, width=Inches(5.5))
+    p = doc.add_paragraph("Figure 2: Actual vs target allocation by ticker.")
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_paragraph()
+
+
+    # --- ASSET CLASS PIE + BAR ---
     doc.add_heading("Asset Class Allocation Breakdown", level=2)
-    doc.add_picture(asset_pie_stream, width=Inches(5.5))
-    p = doc.add_paragraph("Figure 2: Allocation by asset class.")
+    p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run()
+    r.add_picture(asset_pie_stream, width=Inches(5.5))
+
+
+    if asset_class_alloc_stream is not None:
+        doc.add_heading("Asset Class Allocation vs Target", level=3)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run()
+        r.add_picture(asset_class_alloc_stream, width=Inches(6))
+        p = doc.add_paragraph("Figure 4: Actual vs target allocation by asset class.")
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_paragraph()
+
+    # --- SECTOR HEATMAP ---
     doc.add_heading("Sector Allocation Heatmap", level=2)
-    doc.add_picture(sector_stream, width=Inches(5.5))
-    p = doc.add_paragraph("Figure 3: Sector exposure (approx).")
+    p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run()
+    r.add_picture(sector_stream, width=Inches(5.5))
+    p = doc.add_paragraph("Figure 5: Sector exposure (approx).")
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
 
     # ===================================================================
     # PERFORMANCE SECTION
@@ -562,8 +600,10 @@ def build_report(
     # ----- MTD Chart -----
     doc.add_heading("MTD Cumulative Return — Portfolio vs Benchmarks", level=2)
     p1 = doc.add_paragraph()
+    p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r1 = p1.add_run()
     r1.add_picture(mtd_chart_stream, width=Inches(5.2))
+
 
     # micro-spacer to avoid page split
     sp1 = doc.add_paragraph()
@@ -573,8 +613,10 @@ def build_report(
     # ----- YTD Chart -----
     doc.add_heading("YTD Cumulative Return — Portfolio vs Benchmarks", level=2)
     p2 = doc.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r2 = p2.add_run()
     r2.add_picture(ytd_chart_stream, width=Inches(5.2))
+
 
     # Caption for BOTH charts
     cap = doc.add_paragraph(
@@ -639,7 +681,7 @@ def build_report(
     doc.add_heading("Holdings Multi-Horizon Returns", level=2)
     doc.add_paragraph(
         "Performance of each holding over trailing windows "
-        "(1D, 1W, 1M, 3M, 6M)."
+        "(1D, 1M, 3M, 6M, YTD, 1Y, 3Y Ann, 5Y Ann)."
     )
 
     returns_sorted = returns_df.sort_values("6M %", ascending=False, na_position="last")
@@ -650,18 +692,22 @@ def build_report(
             [
                 r["Ticker"],
                 fmt_pct(r["1D %"]),
-                fmt_pct(r["1W %"]),
                 fmt_pct(r["1M %"]),
                 fmt_pct(r["3M %"]),
                 fmt_pct(r["6M %"]),
-            ]
-        )
+                fmt_pct(r["YTD %"]),
+                fmt_pct(r["1Y %"]),
+                fmt_pct(r["3Y Ann %"]),
+                fmt_pct(r["5Y Ann %"]),
+    ]
+)
 
     add_table(
-        ["Ticker", "1D %", "1W %", "1M %", "3M %", "6M %"],
+        ["Ticker", "1D", "1M", "3M", "6M", "YTD", "1Y", "3Y Ann", "5Y Ann"],
         rows,
-        right_align_cols=[1, 2, 3, 4, 5],
-    )
+        right_align_cols=[1, 2, 3, 4, 5, 6, 7, 8],
+)
+
 
 
     # ===================================================================
@@ -669,7 +715,7 @@ def build_report(
     # ===================================================================
     dollar_pl_sorted = dollar_pl_df.set_index("Ticker").reindex(returns_sorted["Ticker"]).reset_index()
 
-    doc.add_heading("Holdings Multi-Horizon Profit/Loss ($)", level=2)
+    doc.add_heading("Holdings Multi-Horizon Profit/Loss", level=2)
     doc.add_paragraph("Dollar profit/loss over the same trailing windows.")
 
     pl_rows = []
@@ -678,18 +724,22 @@ def build_report(
             [
                 r["Ticker"],
                 fmt_dollar(r["1D $"]),
-                fmt_dollar(r["1W $"]),
                 fmt_dollar(r["1M $"]),
                 fmt_dollar(r["3M $"]),
                 fmt_dollar(r["6M $"]),
-            ]
-        )
+                fmt_dollar(r["YTD $"]),
+                fmt_dollar(r["1Y $"]),
+                fmt_dollar(r["3Y $"]),
+                fmt_dollar(r["5Y $"]),
+    ]
+)
 
     add_table(
-        ["Ticker", "1D $", "1W $", "1M $", "3M $", "6M $"],
+        ["Ticker", "1D", "1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"],
         pl_rows,
-        right_align_cols=[1, 2, 3, 4, 5],
-    )
+        right_align_cols=[1, 2, 3, 4, 5, 6, 7, 8],
+)
+
 
 
     # ===================================================================
@@ -697,7 +747,10 @@ def build_report(
     # ===================================================================
     doc.add_paragraph()
     doc.add_heading("Compound Value Breakdown", level=2)
-    doc.add_picture(compound_stream, width=Inches(6))
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run()
+    r.add_picture(compound_stream, width=Inches(6))
     p = doc.add_paragraph("Figure: Illustrates contributions vs growth at a 7% annual return.")
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -735,7 +788,10 @@ def build_report(
     doc.add_paragraph()
 
     # --------- Insert chart right after table -----------------------
-    doc.add_picture(growth_stream, width=Inches(6))
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run()
+    r.add_picture(growth_stream, width=Inches(6))
     p = doc.add_paragraph("Figure: Long-term projections.")
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -747,14 +803,22 @@ def build_report(
     doc.add_heading("Risk & Volatility Analysis", level=1)
 
     doc.add_heading("Expected Volatility by Asset Class", level=2)
-    doc.add_picture(vol_stream, width=Inches(5.25))
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run()
+    r.add_picture(vol_stream, width=Inches(5.25))
     p = doc.add_paragraph("Figure: Approximate volatility estimate.")
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_heading("Risk vs Expected Return", level=2)
-    doc.add_picture(risk_stream, width=Inches(5.25))
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.left_indent = Inches(0.275)  
+    r = p.add_run()
+    r.add_picture(risk_stream, width=Inches(5.7))
     p = doc.add_paragraph("Figure: Trade-off between expected return and volatility.")
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.left_indent = Inches(0)
 
     # ===================================================================
     # SAVE DOCX / PDF
