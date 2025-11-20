@@ -1,9 +1,0 @@
-ticker,shares,asset_class
-AAPL,12.5,US Equities
-MSFT,8.2,US Equities
-TSLA,3.7,US Equities
-VEA,40,International Equities
-BND,55,Fixed Income
-GDX,18,Precious Metals
-BTC-USD,0.05,Digital Assets
-XLE,20,Energy
