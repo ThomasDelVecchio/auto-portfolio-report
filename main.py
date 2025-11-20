@@ -265,6 +265,11 @@ start_1w = today - pd.Timedelta(days=7)
 start_1m = today - pd.DateOffset(months=1)
 start_3m = today - pd.DateOffset(months=3)
 start_6m = today - pd.DateOffset(months=6)
+start_ytd = pd.Timestamp(today.year, 1, 1)
+start_1y = today - pd.DateOffset(years=1)
+start_3y = today - pd.DateOffset(years=3)
+start_5y = today - pd.DateOffset(years=5)
+
 
 # Normalize "today" to a date for daily-bar comparison
 today_date = pd.Timestamp(today).date()
@@ -311,11 +316,29 @@ for _, row in df.iterrows():
         d["1D %"] = np.nan
 
 
-    # --- 1W / 1M / 3M / 6M ---
     d["1W %"] = round(get_return_pct(t, start_1w, today), 2)
     d["1M %"] = round(get_return_pct(t, start_1m, today), 2)
     d["3M %"] = round(get_return_pct(t, start_3m, today), 2)
     d["6M %"] = round(get_return_pct(t, start_6m, today), 2)
+    d["YTD %"] = round(get_return_pct(t, start_ytd, today), 2)
+    d["1Y %"] = round(get_return_pct(t, start_1y, today), 2)
+    ret_3y = get_return_pct(t, start_3y, today)
+    ret_5y = get_return_pct(t, start_5y, today)
+
+    d["3Y_total %"] = round(ret_3y, 2)
+    d["5Y_total %"] = round(ret_5y, 2)
+
+    def annualize(total_pct, years):
+        if total_pct is None or np.isnan(total_pct):
+            return np.nan
+        r = total_pct / 100
+        if r <= -1:
+            return np.nan
+        return round(((1 + r) ** (1/years) - 1) * 100, 2)
+
+    d["3Y Ann %"] = annualize(ret_3y, 3)
+    d["5Y Ann %"] = annualize(ret_5y, 5)
+
 
     # Append final row
     ticker_horizon_rows.append(d)
@@ -335,11 +358,15 @@ for _, r in df.iterrows():
     pl_rows.append({
         "Ticker": t,
         "1D $": dollar_pl_from_return(cur_val, rr["1D %"]),
-        "1W $": dollar_pl_from_return(cur_val, rr["1W %"]),
         "1M $": dollar_pl_from_return(cur_val, rr["1M %"]),
         "3M $": dollar_pl_from_return(cur_val, rr["3M %"]),
         "6M $": dollar_pl_from_return(cur_val, rr["6M %"]),
-    })
+        "YTD $": dollar_pl_from_return(cur_val, rr["YTD %"]),
+        "1Y $": dollar_pl_from_return(cur_val, rr["1Y %"]),
+        "3Y $": dollar_pl_from_return(cur_val, rr["3Y_total %"]),
+        "5Y $": dollar_pl_from_return(cur_val, rr["5Y_total %"]),
+})
+
 
 dollar_pl_df = pd.DataFrame(pl_rows)
 
@@ -596,6 +623,82 @@ asset_pie_stream.seek(0)
 plt.close()
 
 # ---------------------------------------------------------
+# 11b) ALLOCATION VS TARGET BAR CHARTS (PROFESSIONAL)
+# ---------------------------------------------------------
+
+# --- Ticker Allocation vs Target ---
+plt.figure(figsize=(9, 5))
+
+x = np.arange(len(df))
+width = 0.35
+
+ticker_actual = df["allocation_pct"].astype(float).values
+ticker_target = df["target_pct"].astype(float).values
+ticker_labels = df["ticker"].astype(str).values
+
+plt.bar(x - width / 2, ticker_actual, width, label="Actual %", color=COLOR_MAIN[0])
+plt.bar(x + width / 2, ticker_target, width, label="Target %", color=COLOR_MAIN[2])
+
+plt.xticks(x, ticker_labels, rotation=45, ha="right", fontsize=9)
+plt.ylabel("Allocation (%)", fontsize=10)
+plt.title("Ticker Allocation vs Target", fontsize=12, weight="bold")
+plt.grid(axis="y", linestyle="--", alpha=0.3)
+plt.legend(fontsize=9)
+
+# Add % labels above bars
+for i, v in enumerate(ticker_actual):
+    plt.text(i - width / 2, v + 0.4, f"{v:.1f}%", ha="center", fontsize=8)
+
+for i, v in enumerate(ticker_target):
+    plt.text(i + width / 2, v + 0.4, f"{v:.1f}%", ha="center", fontsize=8)
+
+plt.tight_layout()
+
+ticker_alloc_stream = BytesIO()
+plt.savefig(ticker_alloc_stream, format="png", bbox_inches="tight", facecolor="white")
+ticker_alloc_stream.seek(0)
+plt.close()
+
+
+# --- Asset Class Allocation vs Target ---
+if asset_targets_df is not None and not asset_targets_df.empty:
+    merged_ac = asset_df.merge(asset_targets_df, on="asset_class", how="left")
+    merged_ac["target_pct"] = merged_ac["target_pct"].fillna(0.0)
+
+    ac_names = merged_ac["asset_class"].astype(str).values
+    ac_actual = merged_ac["allocation_pct"].astype(float).values
+    ac_target = merged_ac["target_pct"].astype(float).values
+
+    x2 = np.arange(len(ac_names))
+    width = 0.35
+
+    plt.figure(figsize=(9, 5))
+
+    plt.bar(x2 - width / 2, ac_actual, width, label="Actual %", color=COLOR_MAIN[0])
+    plt.bar(x2 + width / 2, ac_target, width, label="Target %", color=COLOR_MAIN[2])
+
+    plt.xticks(x2, ac_names, rotation=30, ha="right", fontsize=9)
+    plt.ylabel("Allocation (%)", fontsize=10)
+    plt.title("Asset Class Allocation vs Target", fontsize=12, weight="bold")
+    plt.grid(axis="y", linestyle="--", alpha=0.3)
+    plt.legend(fontsize=9)
+
+    for i, v in enumerate(ac_actual):
+        plt.text(i - width / 2, v + 0.4, f"{v:.1f}%", ha="center", fontsize=8)
+
+    for i, v in enumerate(ac_target):
+        plt.text(i + width / 2, v + 0.4, f"{v:.1f}%", ha="center", fontsize=8)
+
+    plt.tight_layout()
+
+    asset_class_alloc_stream = BytesIO()
+    plt.savefig(asset_class_alloc_stream, format="png", bbox_inches="tight", facecolor="white")
+    asset_class_alloc_stream.seek(0)
+    plt.close()
+else:
+    asset_class_alloc_stream = None
+
+# ---------------------------------------------------------
 # MTD & YTD PORTFOLIO VS BENCHMARKS — FIXED + CLEAN
 # ---------------------------------------------------------
 
@@ -801,5 +904,7 @@ build_report(
     mtd_chart_stream=mtd_chart_stream,
     ytd_chart_stream=ytd_chart_stream,
     proj_rows=proj_rows,
+    ticker_alloc_stream=ticker_alloc_stream,
+    asset_class_alloc_stream=asset_class_alloc_stream,
 )
 
