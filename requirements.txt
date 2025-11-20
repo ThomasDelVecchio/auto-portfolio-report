@@ -7,3 +7,7 @@ docx2pdf
 openpyxl
 pillow
 python-dateutil
+lxml
+requests
+pytz
+tzdata
