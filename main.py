@@ -23,6 +23,7 @@ from config import (
     EXTRA_OUTPUT_DIRS,
     RISK_RETURN,
     ETF_SECTOR_MAP,
+    ENABLE_SECTOR_CHART,
 )
 from time_utils import get_eastern_now
 from helpers import (
@@ -71,6 +72,19 @@ df["asset_class"] = (
     .str.strip()
 )
 
+# --- Apply short asset class names ---
+from config import ASSET_CLASS_SHORT
+
+def shorten_unmapped(ac: str, max_len=12):
+    ac = str(ac)
+    return ac if len(ac) <= max_len else ac[:max_len - 1] + "…"
+
+df["asset_class_short"] = (
+    df["asset_class"].map(ASSET_CLASS_SHORT)
+    .fillna(df["asset_class"].apply(shorten_unmapped))
+)
+
+
 
 # Prices
 prices = []
@@ -98,6 +112,19 @@ asset_df["allocation_pct"] = np.where(
     total_value > 0, (asset_df["value"] / total_value * 100.0), 0.0
 )
 asset_df["allocation_pct"] = normalize_allocations(asset_df["allocation_pct"])
+
+from config import ASSET_CLASS_SHORT
+
+def shorten_unmapped(ac: str, max_len=12):
+    ac = str(ac)
+    return ac if len(ac) <= max_len else ac[:max_len - 1] + "…"
+
+asset_df["asset_class_short"] = (
+    asset_df["asset_class"]
+    .map(ASSET_CLASS_SHORT)
+    .fillna(asset_df["asset_class"].apply(shorten_unmapped))
+)
+
 
 
 # ---------------- TARGETS ----------------
@@ -153,7 +180,7 @@ else:
 # ---------------------------------------------------------
 # 3) SECTOR MAP (ETF + single stocks)
 # ---------------------------------------------------------
-
+"""
 portfolio_sectors = {}
 sector_cache = {}
 
@@ -203,6 +230,64 @@ plt.savefig(sector_stream, format="png", bbox_inches="tight", facecolor="white")
 sector_stream.seek(0)
 plt.close()
 
+"""
+
+# ------------------- SECTOR HEATMAP (optional via config) -------------------
+if ENABLE_SECTOR_CHART:
+
+    portfolio_sectors = {}
+    sector_cache = {}
+
+    for _, row in df.iterrows():
+        t = row["ticker"]
+        w = float(row["allocation_pct"])
+
+        if t in ETF_SECTOR_MAP:
+            for sec, pct in ETF_SECTOR_MAP[t].items():
+                portfolio_sectors[sec] = portfolio_sectors.get(sec, 0.0) + (w * pct / 100.0)
+            continue
+
+        try:
+            if t in sector_cache:
+                sec = sector_cache[t]
+            else:
+                info = yf.Ticker(t).info
+                raw_sector = info.get("sector")
+                sec = normalize_sector_name(raw_sector) if raw_sector else "Other"
+                sector_cache[t] = sec
+
+            portfolio_sectors[sec] = portfolio_sectors.get(sec, 0.0) + w
+
+        except Exception:
+            portfolio_sectors["Other"] = portfolio_sectors.get("Other", 0.0) + w
+
+    sector_df_static = pd.DataFrame(
+        list(portfolio_sectors.items()),
+        columns=["Sector", "Weight"]
+    )
+    total = sector_df_static["Weight"].sum()
+    sector_df_static["Weight"] = (sector_df_static["Weight"] / total * 100.0).round(2)
+    sector_df_static = sector_df_static.sort_values("Weight", ascending=False).reset_index(drop=True)
+
+    # Sector chart
+    plt.figure(figsize=(6, 5))
+    plt.barh(
+        sector_df_static["Sector"],
+        sector_df_static["Weight"],
+        color=plt.cm.Blues(np.linspace(0.4, 0.9, len(sector_df_static))),
+    )
+    plt.xlabel("Portfolio Exposure (%)")
+    plt.title("Sector Allocation Heatmap", fontsize=12, weight="bold")
+    plt.gca().invert_yaxis()
+    plt.tight_layout()
+
+    sector_stream = BytesIO()
+    plt.savefig(sector_stream, format="png", bbox_inches="tight", facecolor="white")
+    sector_stream.seek(0)
+    plt.close()
+
+else:
+    sector_stream = None
 
 # ---------------------------------------------------------
 # 5) TRUE PORTFOLIO-LEVEL MTD & YTD (Correct Calendar Anchors)
@@ -549,6 +634,11 @@ plt.savefig(vol_stream, format="png", bbox_inches="tight", facecolor="white")
 vol_stream.seek(0)
 plt.close()
 
+# ---------------------------------------------------------
+# RISK / VOLATILITY — CLEAN NON-OVERLAPPING LABELS
+# ---------------------------------------------------------
+from adjustText import adjust_text
+
 plt.figure(figsize=(6, 4))
 plt.scatter(
     risk_df["vol"],
@@ -560,8 +650,26 @@ plt.scatter(
     color=COLOR_MAIN[1],
 )
 
+texts = []
 for _, r in risk_df.iterrows():
-    plt.annotate(r["asset_class"], (r["vol"] + 0.4, r["ret"]), fontsize=8, weight="bold")
+    # place labels slightly offset for adjustText to work with
+    texts.append(
+        plt.text(
+            r["vol"],
+            r["ret"],
+            r["asset_class"],
+            fontsize=8,
+            weight="bold"
+        )
+    )
+
+adjust_text(
+    texts,
+    expand_points=(1.2, 1.3),
+    expand_text=(1.2, 1.3),
+    arrowprops=dict(arrowstyle="->", color="gray", lw=0.6),
+    only_move={'points':'y', 'text':'xy'}
+)
 
 plt.title("Risk vs Expected Return", fontsize=12, weight="bold")
 plt.xlabel("Volatility (%)")
@@ -573,6 +681,7 @@ risk_stream = BytesIO()
 plt.savefig(risk_stream, format="png", bbox_inches="tight", facecolor="white")
 risk_stream.seek(0)
 plt.close()
+
 
 
 # ---------------------------------------------------------
