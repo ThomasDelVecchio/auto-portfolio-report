@@ -40,7 +40,6 @@ def build_report(
     total_3m_pl,
     port_6m_return,
     total_6m_pl,
-    sector_stream,
     ticker_pie_stream,
     asset_pie_stream,
     growth_stream,
@@ -52,6 +51,7 @@ def build_report(
     proj_rows,
     ticker_alloc_stream,
     asset_class_alloc_stream,
+    sector_stream=None,
 ):
 
 
@@ -381,12 +381,13 @@ def build_report(
         ticker_rows.append(
             [
                 r["ticker"],
-                r["asset_class"],
+                r["asset_class_short"],
                 f"{r['shares']:.4f}",
-                f"{r['price']:.2f}",
-                f"{r['value']:.2f}",
-                f"{r['allocation_pct']:.2f}%",
-                f"{(r.get('target_pct') or 0.0):.2f}%",
+                fmt_dollar(r["price"]),
+                fmt_dollar(r["value"]),
+                fmt_pct(r["allocation_pct"]),
+                fmt_pct(r.get("target_pct") or 0.0),
+
                 "-" if pd.isna(r.get("contribute_to_target")) else fmt_dollar(r["contribute_to_target"]),
             ]
         )
@@ -397,7 +398,7 @@ def build_report(
             "",
             "",
             "",
-            f"{df['value'].sum():,.2f}",
+            fmt_dollar(df["value"].sum()),
             "",
             "",
             fmt_dollar(df["contribute_to_target"].fillna(0).sum()),
@@ -411,9 +412,9 @@ def build_report(
             "Shares",
             "Price ($)",
             "Value ($)",
-            "Allocation %",
-            "Target %",
-            "Contribute to Target ($)",
+            "Allocation",
+            "Target",
+            "To Contrib",
         ],
         ticker_rows,
         right_align_cols=[2, 3, 4, 5, 6, 7],
@@ -439,7 +440,7 @@ def build_report(
                 sched_rows.append(
                     [
                         r["ticker"],
-                        r["asset_class"],
+                        r["asset_class_short"],
                         fmt_dollar(gap),
                         fmt_dollar(monthly_dollars),
                         f"{share * 100:.1f}%",
@@ -448,7 +449,7 @@ def build_report(
 
             doc.add_heading("Illustrative Monthly Contribution Schedule", level=2)
             add_table(
-                ["Ticker", "Asset Class", "Gap to Target ($)", "Suggested Monthly ($)", "Share of Monthly %"],
+                ["Ticker", "Asset Class", "Gap to Target", "Monthly Contrib", "Share of Monthly"],
                 sched_rows,
                 right_align_cols=[2, 3, 4],
             )
@@ -471,16 +472,19 @@ def build_report(
         )
         ac_cmp["target_pct"] = ac_cmp["target_pct"].fillna(0.0)
         ac_cmp["delta_pct"] = ac_cmp["allocation_pct"] - ac_cmp["target_pct"]
+        ac_cmp["asset_class_short"] = asset_df.set_index("asset_class").loc[
+            ac_cmp["asset_class"], "asset_class_short"
+        ].values
         ac_cmp = ac_cmp.reindex(ac_cmp["delta_pct"].abs().sort_values(ascending=False).index)
 
         ac_rows = []
         for _, r in ac_cmp.iterrows():
             ac_rows.append(
                 [
-                    r["asset_class"],
-                    f"{r['value']:.2f}",
-                    f"{r['allocation_pct']:.2f}%",
-                    f"{r['target_pct']:.2f}%",
+                    r["asset_class_short"] if "asset_class_short" in r else r["asset_class"],
+                    fmt_dollar(r["value"]),
+                    fmt_pct(r["allocation_pct"]),
+                    fmt_pct(r["target_pct"]),
                     fmt_pct(r["delta_pct"]),
                 ]
             )
@@ -488,11 +492,12 @@ def build_report(
         ac_rows.append(
             [
                 "TOTAL",
-                f"{asset_df['value'].sum():,.2f}",
+                fmt_dollar(asset_df["value"].sum()),
                 "100.00%",
-                f"{asset_targets_df['target_pct'].sum():.2f}%",
+                fmt_pct(asset_targets_df["target_pct"].sum()),
                 "",
             ]
+
         )
 
         table = add_table(
@@ -513,7 +518,7 @@ def build_report(
         for _, r in asset_df.iterrows():
             ac_rows.append(
                 [
-                    r["asset_class"],
+                    r["asset_class_short"] if "asset_class_short" in r else r["asset_class"],
                     f"{r['value']:.2f}",
                     f"{r['allocation_pct']:.2f}%",
                 ]
@@ -572,15 +577,14 @@ def build_report(
 
     doc.add_paragraph()
 
-    # --- SECTOR HEATMAP ---
-    doc.add_heading("Sector Allocation Heatmap", level=2)
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run()
-    r.add_picture(sector_stream, width=Inches(5.5))
-    p = doc.add_paragraph("Figure 5: Sector exposure (approx).")
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
+    if sector_stream is not None:
+        doc.add_heading("Sector Allocation Heatmap", level=2)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run()
+        r.add_picture(sector_stream, width=Inches(5.5))
+        p = doc.add_paragraph("Figure 5: Sector exposure (approx).")
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     # ===================================================================
     # PERFORMANCE SECTION
