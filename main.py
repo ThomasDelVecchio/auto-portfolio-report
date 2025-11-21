@@ -188,10 +188,18 @@ for _, row in df.iterrows():
     t = row["ticker"]
     w = float(row["allocation_pct"])
 
-    if t in ETF_SECTOR_MAP:
-        for sec, pct in ETF_SECTOR_MAP[t].items():
-            portfolio_sectors[sec] = portfolio_sectors.get(sec, 0.0) + (w * pct / 100.0)
+    # --- DIGITAL ASSETS OVERRIDE (ADD THIS) ---
+    if t in ["FBTC", "IBIT", "BITO"]:
+        portfolio_sectors["Digital Assets"] += weight
         continue
+
+
+    if t in ETF_SECTOR_MAP:
+        for raw_sec, pct in ETF_SECTOR_MAP[t].items():
+            norm_sec = normalize_sector_name(raw_sec)
+            portfolio_sectors[norm_sec] = portfolio_sectors.get(norm_sec, 0.0) + (w * pct / 100.0)
+        continue
+
 
     try:
         if t in sector_cache:
@@ -243,8 +251,9 @@ if ENABLE_SECTOR_CHART:
         w = float(row["allocation_pct"])
 
         if t in ETF_SECTOR_MAP:
-            for sec, pct in ETF_SECTOR_MAP[t].items():
-                portfolio_sectors[sec] = portfolio_sectors.get(sec, 0.0) + (w * pct / 100.0)
+            for raw_sec, pct in ETF_SECTOR_MAP[t].items():
+                norm_sec = normalize_sector_name(raw_sec)
+                portfolio_sectors[norm_sec] = portfolio_sectors.get(norm_sec, 0.0) + (w * pct / 100.0)
             continue
 
         try:
@@ -683,21 +692,33 @@ risk_stream.seek(0)
 plt.close()
 
 
-
 # ---------------------------------------------------------
-# 11) PIE CHARTS
+# TICKER ALLOCATION PIE (CLEAN, NO DONUT, NO OVERLAP)
 # ---------------------------------------------------------
-
 plt.figure(figsize=(6, 6))
-plt.pie(
+
+wedges, texts, autotexts = plt.pie(
     df["allocation_pct"],
     labels=df["ticker"],
     autopct="%1.2f%%",
-    startangle=90,
-    pctdistance=0.85,
-    labeldistance=1.05,
+    startangle=140,
+
+    # --- tuned spacing ---
+    pctdistance=0.78,     # percent labels slightly outward
+    labeldistance=1.08,   # ticker labels slightly outward but not far
+    rotatelabels=False,
+
+    wedgeprops=dict(linewidth=0.8, edgecolor="none"),
     textprops={"fontsize": 9},
 )
+
+# keep labels horizontal + padded
+for t in texts:
+    t.set_rotation(0)
+    t.set_clip_on(False)
+    t.set_bbox(dict(facecolor="white", alpha=0.6, edgecolor="none", pad=0.6))
+
+
 plt.title("Ticker Allocation", fontsize=12, weight="bold")
 plt.tight_layout()
 
@@ -706,6 +727,10 @@ plt.savefig(ticker_pie_stream, format="png", bbox_inches="tight", facecolor="whi
 ticker_pie_stream.seek(0)
 plt.close()
 
+
+# ---------------------------------------------------------
+# ASSET CLASS ALLOCATION PIE (CLEAN, NO DONUT, NO OVERLAP)
+# ---------------------------------------------------------
 ac_labels = [
     ac.replace("International Equities", "Intl. Equities").replace(
         "Precious Metals", "Precious\nMetals"
@@ -714,15 +739,28 @@ ac_labels = [
 ]
 
 plt.figure(figsize=(6, 6))
-plt.pie(
+
+wedges, texts, autotexts = plt.pie(
     asset_df["allocation_pct"],
     labels=ac_labels,
     autopct="%1.2f%%",
-    startangle=90,
-    pctdistance=0.80,
-    labeldistance=1.03,
+    startangle=140,
+
+    # --- tuned spacing ---
+    pctdistance=0.76,     # percent labels slightly outward
+    labeldistance=1.06,   # labels not too far but readable
+    rotatelabels=False,
+
+    wedgeprops=dict(linewidth=0.8, edgecolor="none"),
     textprops={"fontsize": 8},
 )
+
+# clean padded labels
+for t in texts:
+    t.set_rotation(0)
+    t.set_clip_on(False)
+    t.set_bbox(dict(facecolor="white", alpha=0.6, edgecolor="none", pad=0.5))
+
 plt.title("Asset Class Allocation", fontsize=12, weight="bold")
 plt.tight_layout()
 
@@ -730,6 +768,8 @@ asset_pie_stream = BytesIO()
 plt.savefig(asset_pie_stream, format="png", bbox_inches="tight", facecolor="white")
 asset_pie_stream.seek(0)
 plt.close()
+
+
 
 # ---------------------------------------------------------
 # 11b) ALLOCATION VS TARGET BAR CHARTS (PROFESSIONAL)
