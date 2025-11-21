@@ -52,7 +52,7 @@ TARGET_SPLIT_METHOD = "value"
 RISK_FREE_RATE = 0.04
 
 # Monthly contribution assumption used in projections
-monthly_contrib = 250.0
+monthly_contrib = 1200.0
 
 # Main color palette for charts
 COLOR_MAIN = ["#2563EB", "#10B981", "#F59E0B", "#6366F1", "#14B8A6"]
