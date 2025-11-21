@@ -72,7 +72,12 @@ EXTRA_OUTPUT_DIRS = [
 # These are NOT derived from market data; they are static reference points.
 RISK_RETURN = {
     "US Equities":            {"return": 8.0,  "vol": 15.0},
+    "US Large Cap":           {"return": 8.0,  "vol": 15.0},
+    "US Growth":              {"return": 9.5,  "vol": 20.0}, 
+    "US Small Cap":           {"return": 9.0,  "vol": 22.0},
     "International Equity":   {"return": 8.5,  "vol": 17.0},
+    "US Bonds":               {"return": 4.0,  "vol": 5.0},
+    "International Bonds":    {"return": 3.5,  "vol": 6.0},
     "Emerging Markets":       {"return": 9.0,  "vol": 20.0},
     "Fixed Income":           {"return": 4.0,  "vol": 5.0},
     "Real Estate":            {"return": 6.0,  "vol": 12.0},
@@ -107,6 +112,31 @@ ETF_SECTOR_MAP = {
         "Industrials": 3.0,
         "Other": 3.0,
     },
+
+    "QQQM": {
+        "Information Technology": 53.0,
+        "Communication Services": 16.5,
+        "Consumer Discretionary": 13.6,
+        "Health Care": 7.4,
+        "Consumer Staples": 5.2,
+        "Industrials": 3.1,
+        "Utilities": 0.7,
+        "Real Estate": 0.5
+    },
+
+    "VBR": {
+        "Financials": 24.5,
+        "Industrials": 22.4,
+        "Real Estate": 12.5,
+        "Consumer Discretionary": 10.3,
+        "Information Technology": 7.9,
+        "Energy": 6.4,
+        "Health Care": 6.2,
+        "Materials": 5.6,
+        "Utilities": 2.4,
+        "Communication Services": 2.0
+    },
+
     "VXUS": {
         "Financials": 20.0,
         "Industrials": 15.0,
@@ -119,19 +149,31 @@ ETF_SECTOR_MAP = {
         "Utilities": 4.0,
         "Comm Services": 4.0,
     },
-    "BND": {"Fixed Income": 100.0},
-    "GLD": {"Precious Metals": 100.0},
-    "FBTC": {"Digital Assets": 100.0},
+    "BND": {},
+    "BNDX": {},
+    "GLD": {},
+    "FBTC": {},
 }
 
 # Normalize Yahoo sector names to match ETF naming convention
 SECTOR_NAME_NORMALIZE = {
+    # --- Tech ---
     "Technology": "Tech",
     "Information Technology": "Tech",
+
+    # --- Financials ---
     "Financial Services": "Financials",
+
+    # --- Consumer Discretionary (UNIFY ALL TO ONE NAME) ---
     "Consumer Cyclical": "Consumer Disc.",
+    "Consumer Discretionary": "Consumer Disc.",
+    "Consumer Discretionary Services": "Consumer Disc.",
+    "Consumer Discretionary Industry": "Consumer Disc.",
+
+    # --- Communications ---
     "Communication Services": "Comm Services",
 }
+
 
 # ===========================
 # Asset Class Short Names
@@ -144,7 +186,9 @@ ASSET_CLASS_SHORT = {
     "US Equity - Small Cap": "US SC",
     "US Equity - Mid Cap": "US MC",
     "Large Cap Equity": "LC Eq",
+    "US Large Cap": "US LC Eq",
     "Small Cap Equity": "SC Eq",
+    "US Small Cap": "US SC Eq",
     "Mid Cap Equity": "MC Eq",
 
     # International Equity
@@ -156,6 +200,7 @@ ASSET_CLASS_SHORT = {
 
     # Bonds / Fixed Income
     "Fixed Income": "FI",
+    "International Bonds": "Intl Bonds",
     "Core Bonds": "Bonds",
     "Investment Grade Bonds": "IG Bonds",
     "High Yield Bonds": "HY Bonds",
@@ -190,4 +235,4 @@ ASSET_CLASS_SHORT = {
     "Unknown": "Other",
 }
 
-ENABLE_SECTOR_CHART = False
+ENABLE_SECTOR_CHART = True
