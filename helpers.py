@@ -338,12 +338,32 @@ def build_ticker_targets(df_holdings: pd.DataFrame,
 
 from config import SECTOR_NAME_NORMALIZE
 
-
-def normalize_sector_name(name: str) -> str:
-    if not isinstance(name, str):
+def normalize_sector_name(sec: str) -> str:
+    """
+    Normalize raw Yahoo Finance sector names + ETF sector names
+    so Consumer Discretionary doesn't split into multiple categories.
+    """
+    if not sec or not isinstance(sec, str):
         return "Other"
-    base = name.strip()
-    return SECTOR_NAME_NORMALIZE.get(base, base)
+
+    clean = sec.strip()
+
+    # 1) Direct normalization map from config
+    if clean in SECTOR_NAME_NORMALIZE:
+        return SECTOR_NAME_NORMALIZE[clean]
+
+    # 2) Fuzzy handling (starts-with matches)
+    lc = clean.lower()
+
+    if "consumer discr" in lc:
+        return "Consumer Disc."
+    if "communication services" in lc or "comm services" in lc:
+        return "Comm Services"
+    if "information technology" in lc or "technology" in lc:
+        return "Tech"
+
+    return clean  # fallback
+
 
 
 # ---------- Dollar Profit/Loss for trailing horizons ----------
