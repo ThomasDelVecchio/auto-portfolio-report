@@ -149,6 +149,49 @@ ETF_SECTOR_MAP = {
         "Utilities": 4.0,
         "Comm Services": 4.0,
     },
+
+    "SCHG": {
+        "Information Technology": 45.0,
+        "Consumer Discretionary": 14.0,
+        "Communication Services": 11.0,
+        "Health Care": 9.0,
+        "Industrials": 7.0,
+        "Financials": 5.0,
+        "Other": 9.0
+    },
+
+    "SPMO": {
+        "Industrials": 18.0,
+        "Financials": 16.0,
+        "Information Technology": 15.0,
+        "Health Care": 10.0,
+        "Consumer Discretionary": 10.0,
+        "Materials": 9.0,
+        "Energy": 7.0,
+        "Real Estate": 6.0,
+        "Utilities": 5.0,
+        "Communication Services": 4.0
+    },
+
+    "AVUV": {
+        "Financials": 27.0,
+        "Industrials": 23.0,
+        "Consumer Discretionary": 12.0,
+        "Information Technology": 11.0,
+        "Real Estate": 10.0,
+        "Energy": 7.0,
+        "Materials": 6.0,
+        "Health Care": 4.0
+    },
+
+    "NDAQ": {    # Nasdaq Inc.
+        "Financials": 100.0
+    },
+
+    "AMZN": {     # Override YF inconsistency
+        "Consumer Discretionary": 100.0
+    },
+
     "BND": {},
     "BNDX": {},
     "GLD": {},
@@ -167,6 +210,7 @@ SECTOR_NAME_NORMALIZE = {
     # --- Consumer Discretionary (UNIFY ALL TO ONE NAME) ---
     "Consumer Cyclical": "Consumer Disc.",
     "Consumer Discretionary": "Consumer Disc.",
+    "Consumer Staples": "Consumer Disc.",
     "Consumer Discretionary Services": "Consumer Disc.",
     "Consumer Discretionary Industry": "Consumer Disc.",
 
